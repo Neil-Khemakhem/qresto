@@ -69,6 +69,7 @@ function App() {
     });
     setPanier([]);
     setEnvoiOk(true);
+    setTimeout(() => setEnvoiOk(false), 6000);
     setVue('confirmation');
   };
 
@@ -114,7 +115,6 @@ function App() {
     </div>
   );
 
-  // PAGE CONFIRMATION
   if (vue === 'confirmation') {
     return (
       <div style={{ minHeight: '100vh', background: CREME2, fontFamily: 'Georgia, serif' }}>
@@ -144,7 +144,6 @@ function App() {
     );
   }
 
-  // PAGE PANIER
   if (vue === 'panier') {
     return (
       <div style={{ minHeight: '100vh', background: CREME2, fontFamily: 'Georgia, serif' }}>
@@ -193,7 +192,6 @@ function App() {
     );
   }
 
-  // PAGE MA TABLE
   if (vue === 'maTable') {
     return (
       <div style={{ minHeight: '100vh', background: CREME2, fontFamily: 'Georgia, serif' }}>
@@ -236,7 +234,6 @@ function App() {
     );
   }
 
-  // PAGE MENU
   return (
     <div style={{ minHeight: '100vh', background: CREME2, fontFamily: 'Georgia, serif' }}>
       <Header />
