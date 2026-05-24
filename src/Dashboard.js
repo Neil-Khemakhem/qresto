@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc, setDoc, getDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 
 const BRUN = '#7B2B0A';
@@ -19,6 +19,16 @@ const CATALOGUE = [
   { id: 7, categorie: "Pâtisseries", nom: "Tarte citron", prix: 5.0 },
   { id: 8, categorie: "Salé", nom: "Avocado toast", prix: 9.0 },
   { id: 9, categorie: "Salé", nom: "Sandwich thon", prix: 7.5 },
+];
+
+const SUPPLEMENTS = [
+  { id: 's1', produitId: 8, nom: "Saumon fumé", prix: 3.0 },
+  { id: 's2', produitId: 8, nom: "Burrata", prix: 4.0 },
+  { id: 's3', produitId: 8, nom: "Avocat supplémentaire", prix: 2.5 },
+  { id: 's4', produitId: 8, nom: "Œuf supplémentaire", prix: 1.5 },
+  { id: 's5', produitId: 9, nom: "Fromage", prix: 1.5 },
+  { id: 's6', produitId: 9, nom: "Double thon", prix: 2.0 },
+  { id: 's7', produitId: 9, nom: "Frites", prix: 3.0 },
 ];
 
 const MDP_STATS = "boss2025";
@@ -40,18 +50,22 @@ function Dashboard() {
   const [historique, setHistorique] = useState([]);
   const [corbeille, setCorbeille] = useState([]);
   const [vue, setVue] = useState('commandes');
+  const [sousVueCommandes, setSousVueCommandes] = useState('en_attente');
   const [commandeSelectee, setCommandeSelectee] = useState(null);
   const [commandeSelecteeLive, setCommandeSelecteeLive] = useState(null);
   const [stocks, setStocks] = useState({});
+  const [stocksSupplements, setStocksSupplements] = useState({});
   const [mdpStats, setMdpStats] = useState('');
   const [statsDebloquees, setStatsDebloquees] = useState(false);
   const [mdpErreur, setMdpErreur] = useState(false);
   const [modifie, setModifie] = useState(false);
   const [paiementsTable, setPaiementsTable] = useState({});
-  const [montantPaiement, setMontantPaiement] = useState('');
   const [modePaiement, setModePaiement] = useState('especes');
-  const [tablePopup, setTablePopup] = useState(null);
-  const [articlesSelectionnes, setArticlesSelectionnes] = useState({});
+  const [articleActif, setArticleActif] = useState(null); // { table, cmdId, idx, montantMax }
+  const [montantArticle, setMontantArticle] = useState('');
+  const [additionModifTable, setAdditionModifTable] = useState(null);
+  const [moisOuvert, setMoisOuvert] = useState(null);
+  const [jourOuvert, setJourOuvert] = useState(null);
 
   useEffect(() => {
     const unsub1 = onSnapshot(collection(db, 'commandes'), (snap) => {
@@ -70,6 +84,11 @@ function Dashboard() {
     });
     return () => { unsub1(); unsub2(); };
   }, [commandeSelectee]);
+
+  useEffect(() => {
+    getDoc(doc(db, 'stocks', 'produits')).then(snap => { if (snap.exists()) setStocks(snap.data()); });
+    getDoc(doc(db, 'stocks', 'supplements')).then(snap => { if (snap.exists()) setStocksSupplements(snap.data()); });
+  }, []);
 
   const ouvrirModifier = (commande) => {
     setCommandeSelectee(commande);
@@ -127,6 +146,64 @@ function Dashboard() {
     setModifie(true);
   };
 
+  const ajouterArticleAddition = async (table, produit) => {
+    const cmdsTable = commandes.filter(c => c.table === table);
+    if (cmdsTable.length === 0) return;
+    const derniereCmd = cmdsTable[cmdsTable.length - 1];
+    const produits = [...(derniereCmd.produits || []), { ...produit, quantite: 1, ajouteParServeur: true }];
+    const total = produits.reduce((acc, p) => acc + p.prix * p.quantite, 0);
+    await updateDoc(doc(db, 'commandes', derniereCmd.id), { produits, total });
+  };
+
+  const supprimerArticleAddition = async (cmdId, idx) => {
+    const cmd = commandes.find(c => c.id === cmdId);
+    if (!cmd) return;
+    const produits = cmd.produits.filter((_, i) => i !== idx);
+    const total = produits.reduce((acc, p) => acc + p.prix * p.quantite, 0);
+    await updateDoc(doc(db, 'commandes', cmdId), { produits, total });
+  };
+
+  // Paiement partiel d'un article
+  const payerArticle = (table, cmdId, idx, montant, mode) => {
+    const montantReel = parseFloat(montant);
+    if (!montantReel || montantReel <= 0) return;
+    const key = `${cmdId}-${idx}`;
+    setPaiementsTable(prev => ({
+      ...prev,
+      [table]: [...(prev[table] || []), {
+        montant: montantReel,
+        mode,
+        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        articleKey: key,
+        label: commandes.find(c => c.id === cmdId)?.produits?.[idx]?.nom || ''
+      }]
+    }));
+    setArticleActif(null);
+    setMontantArticle('');
+  };
+
+  // Tout payer d'un coup
+  const payerTout = (table, mode) => {
+    const reste = resteAPayer(table);
+    if (reste <= 0) return;
+    setPaiementsTable(prev => ({
+      ...prev,
+      [table]: [...(prev[table] || []), {
+        montant: reste,
+        mode,
+        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        label: 'Total'
+      }]
+    }));
+  };
+
+  const montantDejaPayeArticle = (table, cmdId, idx) => {
+    const key = `${cmdId}-${idx}`;
+    return (paiementsTable[table] || [])
+      .filter(p => p.articleKey === key)
+      .reduce((acc, p) => acc + p.montant, 0);
+  };
+
   const cloturerTable = async (table) => {
     const cmdsTable = commandes.filter(c => c.table === table);
     const total = cmdsTable.reduce((acc, c) => acc + (c.total || 0), 0);
@@ -143,59 +220,8 @@ function Dashboard() {
       await updateDoc(doc(db, 'commandes', cmd.id), { statut: 'termine' });
     }
     setPaiementsTable(p => { const n = { ...p }; delete n[table]; return n; });
-    setArticlesSelectionnes(a => { const n = { ...a }; delete n[table]; return n; });
-  };
-
-  const ajouterPaiement = (table, montant, mode) => {
-    setPaiementsTable(p => ({
-      ...p,
-      [table]: [...(p[table] || []), {
-        montant: parseFloat(montant),
-        mode,
-        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-      }]
-    }));
-    setMontantPaiement('');
-    setTablePopup(null);
-  };
-
-  const toggleArticleSelection = (table, cmdId, produitIdx) => {
-    const key = `${cmdId}-${produitIdx}`;
-    setArticlesSelectionnes(prev => {
-      const tableSelection = { ...(prev[table] || {}) };
-      if (tableSelection[key]) delete tableSelection[key];
-      else {
-        const cmd = commandes.find(c => c.id === cmdId);
-        if (cmd) tableSelection[key] = cmd.produits[produitIdx];
-      }
-      return { ...prev, [table]: tableSelection };
-    });
-  };
-
-  const totalArticlesSelectionnes = (table) => {
-    const selection = articlesSelectionnes[table] || {};
-    return Object.values(selection).reduce((acc, p) => acc + p.prix * p.quantite, 0);
-  };
-
-  const exporterExcel = (mois) => {
-    const histoMois = historique.filter(h => h.mois === mois);
-    const rows = [];
-    histoMois.forEach(h => {
-      const date = h.date;
-      const heure = h.heureCloture ? new Date(h.heureCloture.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
-      (h.commandes || []).forEach(cmd => {
-        (cmd.produits || []).forEach(p => {
-          rows.push({ Date: date, Heure: heure, Table: `Table ${h.table}`, Produit: p.nom, Quantité: p.quantite, 'Prix unitaire': p.prix, Total: p.prix * p.quantite });
-        });
-      });
-      (h.paiements || []).forEach(p => {
-        rows.push({ Date: date, Heure: heure, Table: `Table ${h.table}`, Produit: `PAIEMENT (${p.mode})`, Quantité: 1, 'Prix unitaire': p.montant, Total: p.montant });
-      });
-    });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, mois);
-    XLSX.writeFile(wb, `QResto_${mois}.xlsx`);
+    setAdditionModifTable(null);
+    setArticleActif(null);
   };
 
   const tables = [...new Set(commandes.map(c => c.table))].sort((a, b) => a - b);
@@ -204,13 +230,16 @@ function Dashboard() {
   const totalPaye = (table) => (paiementsTable[table] || []).reduce((acc, p) => acc + p.montant, 0);
   const resteAPayer = (table) => Math.max(0, totalTable(table) - totalPaye(table));
 
-  const nbAttente = commandes.filter(c => c.statut === 'en_attente').length;
-  const nbPrep = commandes.filter(c => c.statut === 'en_preparation').length;
-  const nbPret = commandes.filter(c => c.statut === 'pret').length;
+  const commandesEnAttente = commandes.filter(c => c.statut === 'en_attente');
+  const commandesEnPrep = commandes.filter(c => c.statut === 'en_preparation');
+  const commandesServies = commandes.filter(c => c.statut === 'pret');
+  const nbAttente = commandesEnAttente.length;
+  const nbPrep = commandesEnPrep.length;
+  const nbServi = commandesServies.length;
 
-  const statutLabel = (s) => s === 'en_attente' ? 'En attente' : s === 'en_preparation' ? 'En préparation' : 'Prêt';
   const statutColor = (s) => s === 'en_attente' ? '#92400E' : s === 'en_preparation' ? '#1E40AF' : '#166534';
   const statutBg = (s) => s === 'en_attente' ? '#FEF3C7' : s === 'en_preparation' ? '#DBEAFE' : '#DCFCE7';
+  const statutLabel = (s) => s === 'en_attente' ? 'En attente' : s === 'en_preparation' ? 'En préparation' : 'Servi';
   const formatHeure = (h) => !h ? '' : new Date(h.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
   const today = new Date().toLocaleDateString('fr-FR');
@@ -218,6 +247,23 @@ function Dashboard() {
   const totalJour = histoAujourdhui.reduce((acc, h) => acc + (h.total || 0), 0);
   const ticketMoyen = histoAujourdhui.length > 0 ? totalJour / histoAujourdhui.length : 0;
   const moisDisponibles = [...new Set(historique.map(h => h.mois).filter(Boolean))].sort().reverse();
+  const joursParMois = (mois) => [...new Set(historique.filter(h => h.mois === mois).map(h => h.date).filter(Boolean))].sort().reverse();
+
+  const statsParJour = (jour) => {
+    const histoJour = historique.filter(h => h.date === jour);
+    const total = histoJour.reduce((acc, h) => acc + (h.total || 0), 0);
+    const ticket = histoJour.length > 0 ? total / histoJour.length : 0;
+    const map = {};
+    histoJour.forEach(h => {
+      (h.commandes || []).forEach(cmd => {
+        (cmd.produits || []).forEach(p => {
+          if (!map[p.nom]) map[p.nom] = 0;
+          map[p.nom] += p.quantite;
+        });
+      });
+    });
+    return { total, ticket, tables: histoJour.length, top: Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5) };
+  };
 
   const produitsPlusVendus = () => {
     const map = {};
@@ -241,9 +287,85 @@ function Dashboard() {
     return Object.entries(map).sort((a, b) => b[1] - a[1])[0] || null;
   };
 
+  const exporterExcel = (mois) => {
+    const histoMois = historique.filter(h => h.mois === mois);
+    const rows = [];
+    histoMois.forEach(h => {
+      const date = h.date;
+      const heure = h.heureCloture ? new Date(h.heureCloture.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+      (h.commandes || []).forEach(cmd => {
+        (cmd.produits || []).forEach(p => {
+          rows.push({ Date: date, Heure: heure, Table: `Table ${h.table}`, Produit: p.nom, Suppléments: (p.supplementsChoisis || []).join(', '), Sans: (p.ingredientsRetires || []).join(', '), Quantité: p.quantite, 'Prix unitaire': p.prix, Total: p.prix * p.quantite });
+        });
+      });
+      (h.paiements || []).forEach(p => {
+        rows.push({ Date: date, Heure: heure, Table: `Table ${h.table}`, Produit: `PAIEMENT - ${p.label || ''} (${p.mode})`, Suppléments: '', Sans: '', Quantité: 1, 'Prix unitaire': p.montant, Total: p.montant });
+      });
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, mois);
+    XLSX.writeFile(wb, `QResto_${mois}.xlsx`);
+  };
+
+  const CommandeCard = ({ commande }) => (
+    <div style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}`, borderTop: `3px solid ${statutColor(commande.statut)}` }}>
+      <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <span style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a' }}>Table {commande.table}</span>
+          <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatHeure(commande.heure)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ background: statutBg(commande.statut), color: statutColor(commande.statut), padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+            {statutLabel(commande.statut)}
+          </span>
+          <button onClick={() => supprimerCommande(commande)} title="Supprimer"
+            style={{ background: 'none', border: `0.5px solid #DDD`, borderRadius: 6, cursor: 'pointer', color: '#999', padding: '5px 7px', display: 'flex', alignItems: 'center' }}>
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+      <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
+        {commande.produits?.map((p, i) => (
+          <div key={i} style={{ padding: '4px 0', fontSize: 13 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#333' }}>
+              <span style={{ fontWeight: 500 }}>{p.quantite}× {p.nom}</span>
+              <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
+            </div>
+            {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444', marginLeft: 8 }}>✕ Sans : {Array.isArray(p.ingredientsRetires) ? p.ingredientsRetires.join(', ') : p.ingredientsRetires}</div>}
+            {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534', marginLeft: 8 }}>+ {Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</div>}
+            {p.ajouteParServeur && <div style={{ fontSize: 10, color: '#8B7355', fontStyle: 'italic', marginLeft: 8 }}>— Ajouté par le serveur</div>}
+          </div>
+        ))}
+      </div>
+      <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, fontSize: 15, color: BRUN }}>{commande.total?.toFixed(2)} TND</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => ouvrirModifier(commande)}
+            style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#1a1a1a', cursor: 'pointer', fontSize: 12 }}>
+            Modifier
+          </button>
+          {commande.statut === 'en_attente' && (
+            <button onClick={() => changerStatut(commande.id, 'en_preparation')}
+              style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DBEAFE', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+              En préparation →
+            </button>
+          )}
+          {commande.statut === 'en_preparation' && (
+            <button onClick={() => changerStatut(commande.id, 'pret')}
+              style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DCFCE7', color: '#166534', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+              Servi ✓
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ minHeight: '100vh', background: CREME2, fontFamily: 'sans-serif' }}>
 
+      {/* HEADER */}
       <div style={{ background: CREME, borderBottom: `0.5px solid ${BORDER}`, padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 20, color: BLEU, fontStyle: 'italic', fontFamily: 'Georgia, serif' }}>d'inès</span>
@@ -269,110 +391,55 @@ function Dashboard() {
         </div>
       </div>
 
+      {/* COMMANDES — 3 sous-onglets */}
       {vue === 'commandes' && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, padding: '16px 24px' }}>
+          <div style={{ display: 'flex', background: CREME, borderBottom: `0.5px solid ${BORDER}`, padding: '0 24px' }}>
             {[
-              { label: 'En attente', value: nbAttente, color: '#92400E', bg: '#FEF3C7' },
-              { label: 'En préparation', value: nbPrep, color: '#1E40AF', bg: '#DBEAFE' },
-              { label: 'Prêts', value: nbPret, color: '#166534', bg: '#DCFCE7' },
-            ].map((s, i) => (
-              <div key={i} style={{ background: s.bg, borderRadius: 8, padding: '14px 16px', border: `0.5px solid ${BORDER}` }}>
-                <div style={{ fontSize: 11, color: '#666', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</div>
-                <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
-              </div>
+              { key: 'en_attente', label: 'En attente', count: nbAttente, color: '#92400E', bg: '#FEF3C7' },
+              { key: 'en_preparation', label: 'En préparation', count: nbPrep, color: '#1E40AF', bg: '#DBEAFE' },
+              { key: 'pret', label: 'Servies', count: nbServi, color: '#166534', bg: '#DCFCE7' },
+            ].map(s => (
+              <button key={s.key} onClick={() => setSousVueCommandes(s.key)}
+                style={{ padding: '12px 20px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: sousVueCommandes === s.key ? '#1a1a1a' : '#888', fontWeight: sousVueCommandes === s.key ? 700 : 400, borderBottom: sousVueCommandes === s.key ? `2px solid #1a1a1a` : '2px solid transparent', display: 'flex', alignItems: 'center', gap: 8 }}>
+                {s.label}
+                {s.count > 0 && <span style={{ background: s.bg, color: s.color, padding: '1px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{s.count}</span>}
+              </button>
             ))}
           </div>
-
-          {commandes.length === 0 && <div style={{ textAlign: 'center', marginTop: 80, color: '#999' }}>Aucune commande en cours</div>}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, padding: '0 24px 24px' }}>
-            {commandes.map(commande => (
-              <div key={commande.id} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}`, borderTop: `3px solid ${statutColor(commande.statut)}` }}>
-                <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a' }}>Table {commande.table}</span>
-                    <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatHeure(commande.heure)}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ background: statutBg(commande.statut), color: statutColor(commande.statut), padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
-                      {statutLabel(commande.statut)}
-                    </span>
-                    <button onClick={() => supprimerCommande(commande)} title="Supprimer"
-                      style={{ background: 'none', border: `0.5px solid #DDD`, borderRadius: 6, cursor: 'pointer', color: '#999', padding: '5px 7px', display: 'flex', alignItems: 'center' }}>
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-                <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
-                  {commande.produits?.map((p, i) => (
-                    <div key={i} style={{ padding: '3px 0', fontSize: 13 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#333' }}>
-                        <span>{p.quantite}× {p.nom}</span>
-                        <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
-                      </div>
-                      {p.ajouteParServeur && <div style={{ fontSize: 10, color: '#8B7355', fontStyle: 'italic' }}>— Ajouté par le serveur</div>}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: BRUN }}>{commande.total?.toFixed(2)} TND</span>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => ouvrirModifier(commande)}
-                      style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#1a1a1a', cursor: 'pointer', fontSize: 12 }}>
-                      Modifier
-                    </button>
-                    {commande.statut === 'en_attente' && (
-                      <button onClick={() => changerStatut(commande.id, 'en_preparation')}
-                        style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DBEAFE', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                        En préparation
-                      </button>
-                    )}
-                    {commande.statut === 'en_preparation' && (
-                      <button onClick={() => changerStatut(commande.id, 'pret')}
-                        style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DCFCE7', color: '#166534', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                        Prêt ✓
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, padding: '16px 24px 24px' }}>
+            {sousVueCommandes === 'en_attente' && (commandesEnAttente.length === 0 ? <div style={{ textAlign: 'center', marginTop: 60, color: '#999', gridColumn: '1/-1' }}>Aucune commande en attente</div> : commandesEnAttente.map(c => <CommandeCard key={c.id} commande={c} />))}
+            {sousVueCommandes === 'en_preparation' && (commandesEnPrep.length === 0 ? <div style={{ textAlign: 'center', marginTop: 60, color: '#999', gridColumn: '1/-1' }}>Aucune commande en préparation</div> : commandesEnPrep.map(c => <CommandeCard key={c.id} commande={c} />))}
+            {sousVueCommandes === 'pret' && (commandesServies.length === 0 ? <div style={{ textAlign: 'center', marginTop: 60, color: '#999', gridColumn: '1/-1' }}>Aucune commande servie</div> : commandesServies.map(c => <CommandeCard key={c.id} commande={c} />))}
           </div>
         </>
       )}
 
+      {/* SUPPRESSIONS */}
       {vue === 'suppressions' && (
         <div style={{ padding: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Commandes supprimées</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Les 10 dernières suppressions. Cliquez sur restaurer pour remettre en cours.</p>
-          {corbeille.length === 0 ? (
-            <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune suppression récente</div>
-          ) : (
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Les 10 dernières suppressions.</p>
+          {corbeille.length === 0 ? <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune suppression récente</div> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {corbeille.map((cmd, i) => (
                 <div key={i} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}` }}>
                   <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFF8F8' }}>
-                    <div>
-                      <span style={{ fontWeight: 600, color: '#1a1a1a' }}>Table {cmd.table}</span>
-                      <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>Supprimée à {cmd.supprimeLe}</span>
-                    </div>
-                    <button onClick={() => restaurerCommande(cmd)}
-                      style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #C8B400`, background: '#FFFDE7', color: '#7B6000', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                    <div><span style={{ fontWeight: 600 }}>Table {cmd.table}</span><span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>Supprimée à {cmd.supprimeLe}</span></div>
+                    <button onClick={() => restaurerCommande(cmd)} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #C8B400`, background: '#FFFDE7', color: '#7B6000', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <RestoreIcon /> Restaurer
                     </button>
                   </div>
                   <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
                     {cmd.produits?.map((p, j) => (
-                      <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#333', padding: '3px 0' }}>
-                        <span>{p.quantite}× {p.nom}</span>
-                        <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
+                      <div key={j} style={{ fontSize: 13, color: '#333', padding: '3px 0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{p.quantite}× {p.nom}</span><span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span></div>
+                        {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444' }}>Sans : {p.ingredientsRetires.join(', ')}</div>}
+                        {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534' }}>+ {p.supplementsChoisis.join(', ')}</div>}
                       </div>
                     ))}
                   </div>
-                  <div style={{ padding: '10px 16px' }}>
-                    <span style={{ fontWeight: 700, fontSize: 14, color: BRUN }}>{cmd.total?.toFixed(2)} TND</span>
-                  </div>
+                  <div style={{ padding: '10px 16px' }}><span style={{ fontWeight: 700, fontSize: 14, color: BRUN }}>{cmd.total?.toFixed(2)} TND</span></div>
                 </div>
               ))}
             </div>
@@ -380,12 +447,13 @@ function Dashboard() {
         </div>
       )}
 
+      {/* ADDITIONS */}
       {vue === 'additions' && (
         <div style={{ padding: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Additions par table</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Sélectionnez des articles pour un paiement partiel, ou réglez tout d'un coup.</p>
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Cliquez sur un article pour le payer — partiellement ou en entier.</p>
           {tables.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune table active</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}>
             {tables.map(table => {
               const cmds = commandesParTable(table);
               const total = totalTable(table);
@@ -393,39 +461,121 @@ function Dashboard() {
               const paye = totalPaye(table);
               const reste = resteAPayer(table);
               const toutRegle = reste === 0 && paiements.length > 0;
-              const selection = articlesSelectionnes[table] || {};
-              const nbSelectionnes = Object.keys(selection).length;
-              const montantSelection = totalArticlesSelectionnes(table);
+              const enModif = additionModifTable === table;
 
               return (
                 <div key={table} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}`, borderTop: `3px solid ${toutRegle ? '#166534' : BRUN}` }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between' }}>
+
+                  {/* Header table */}
+                  <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 16, fontWeight: 700 }}>Table {table}</span>
-                    <span style={{ fontSize: 12, color: toutRegle ? '#166534' : '#92400E', fontWeight: 600 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: toutRegle ? '#166534' : '#92400E', fontWeight: 600 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
+                      <button onClick={() => setAdditionModifTable(enModif ? null : table)}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: `0.5px solid ${enModif ? BRUN : '#DDD'}`, background: enModif ? BRUN : '#F8F8F8', color: enModif ? CREME : '#666', cursor: 'pointer', fontSize: 11 }}>
+                        {enModif ? 'Terminer' : 'Modifier'}
+                      </button>
+                    </div>
                   </div>
 
-                  <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
-                    <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-                      Appuyez sur un article pour le sélectionner
+                  {/* Boutons payer tout */}
+                  {!toutRegle && !enModif && (
+                    <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
+                      <button onClick={() => payerTout(table, 'especes')}
+                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#166534', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                        Tout payer — Espèces ({reste.toFixed(2)} TND)
+                      </button>
+                      <button onClick={() => payerTout(table, 'carte')}
+                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#1E40AF', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                        Tout payer — Carte
+                      </button>
                     </div>
+                  )}
+
+                  {/* Articles */}
+                  <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
+                    {!enModif && <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Cliquez un article pour payer</div>}
+                    {enModif && <div style={{ fontSize: 11, color: BRUN, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Mode modification</div>}
+
                     {cmds.map((cmd, i) => (
                       <div key={cmd.id} style={{ marginBottom: i < cmds.length - 1 ? 8 : 0 }}>
                         <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>Commande {i + 1} — {formatHeure(cmd.heure)}</div>
                         {cmd.produits?.map((p, j) => {
-                          const key = `${cmd.id}-${j}`;
-                          const selectionne = !!selection[key];
+                          const dejaPayePourCetArticle = montantDejaPayeArticle(table, cmd.id, j);
+                          const prixArticle = p.prix * p.quantite;
+                          const resteArticle = Math.max(0, prixArticle - dejaPayePourCetArticle);
+                          const estActif = articleActif?.cmdId === cmd.id && articleActif?.idx === j;
+                          const estPayeTotal = dejaPayePourCetArticle >= prixArticle;
+
                           return (
-                            <div key={j} onClick={() => toggleArticleSelection(table, cmd.id, j)}
-                              style={{
-                                display: 'flex', justifyContent: 'space-between', fontSize: 13,
-                                padding: '6px 10px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
-                                background: selectionne ? '#DCFCE7' : '#F9F9F9',
-                                border: `0.5px solid ${selectionne ? '#166534' : '#E5E5E5'}`,
-                                color: selectionne ? '#166534' : '#333',
-                                fontWeight: selectionne ? 600 : 400,
-                              }}>
-                              <span>{p.quantite}× {p.nom}</span>
-                              <span>{(p.prix * p.quantite).toFixed(2)} TND {selectionne ? '✓' : ''}</span>
+                            <div key={j} style={{ marginBottom: 4 }}>
+                              <div
+                                onClick={() => {
+                                  if (enModif) return;
+                                  if (estActif) { setArticleActif(null); setMontantArticle(''); return; }
+                                  setArticleActif({ table, cmdId: cmd.id, idx: j, montantMax: resteArticle });
+                                  setMontantArticle(resteArticle.toFixed(2));
+                                }}
+                                style={{
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13,
+                                  padding: '7px 10px', borderRadius: 6, cursor: enModif ? 'default' : 'pointer',
+                                  background: estPayeTotal ? '#F0FFF4' : estActif ? '#EBF5FB' : '#F9F9F9',
+                                  border: `0.5px solid ${estPayeTotal ? '#166534' : estActif ? '#1E40AF' : '#E5E5E5'}`,
+                                }}>
+                                <span style={{ flex: 1, color: estPayeTotal ? '#166534' : '#333' }}>
+                                  {p.quantite}× {p.nom}
+                                  {p.supplementsChoisis?.length > 0 && <span style={{ fontSize: 10, color: '#166534', marginLeft: 4 }}>+{Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</span>}
+                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  {dejaPayePourCetArticle > 0 && !estPayeTotal && (
+                                    <span style={{ fontSize: 10, color: '#166534', background: '#DCFCE7', padding: '1px 6px', borderRadius: 10 }}>−{dejaPayePourCetArticle.toFixed(2)}</span>
+                                  )}
+                                  <span style={{ color: estPayeTotal ? '#166534' : '#333', fontWeight: estPayeTotal ? 600 : 400 }}>
+                                    {estPayeTotal ? '✓ Payé' : `${resteArticle.toFixed(2)} TND`}
+                                  </span>
+                                  {enModif && (
+                                    <button onClick={(e) => { e.stopPropagation(); supprimerArticleAddition(cmd.id, j); }}
+                                      style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 16, padding: '0 2px', marginLeft: 4 }}>✕</button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Mini panneau paiement article */}
+                              {estActif && !enModif && (
+                                <div style={{ background: '#EBF5FB', borderRadius: '0 0 8px 8px', padding: '10px 12px', border: `0.5px solid #1E40AF`, borderTop: 'none', marginTop: -2 }}>
+                                  <div style={{ fontSize: 11, color: '#1E40AF', marginBottom: 8, fontWeight: 600 }}>Montant à encaisser pour "{p.nom}"</div>
+                                  <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                    <input
+                                      value={montantArticle}
+                                      onChange={e => setMontantArticle(e.target.value)}
+                                      style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: `0.5px solid #1E40AF`, fontSize: 13, outline: 'none', MozAppearance: 'textfield' }}
+                                      placeholder="Montant"
+                                    />
+                                    <button onClick={() => setMontantArticle((resteArticle / 2).toFixed(2))}
+                                      style={{ padding: '7px 12px', borderRadius: 6, border: `0.5px solid #1E40AF`, background: '#FFF', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                                      50%
+                                    </button>
+                                    <button onClick={() => setMontantArticle(resteArticle.toFixed(2))}
+                                      style={{ padding: '7px 12px', borderRadius: 6, border: `0.5px solid #1E40AF`, background: '#FFF', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                                      100%
+                                    </button>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'especes')}
+                                      style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#166534', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                                      Espèces
+                                    </button>
+                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'carte')}
+                                      style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#1E40AF', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                                      Carte
+                                    </button>
+                                    <button onClick={() => { setArticleActif(null); setMontantArticle(''); }}
+                                      style={{ padding: '8px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#FFF', color: '#666', cursor: 'pointer', fontSize: 12 }}>
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -433,29 +583,23 @@ function Dashboard() {
                     ))}
                   </div>
 
-                  {nbSelectionnes > 0 && (
-                    <div style={{ padding: '10px 16px', background: '#F0FFF4', borderBottom: `0.5px solid #DCFCE7` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>{nbSelectionnes} article{nbSelectionnes > 1 ? 's' : ''} sélectionné{nbSelectionnes > 1 ? 's' : ''}</span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#166534' }}>{montantSelection.toFixed(2)} TND</span>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => { ajouterPaiement(table, montantSelection, 'especes'); setArticlesSelectionnes(a => { const n = { ...a }; delete n[table]; return n; }); }}
-                          style={{ flex: 1, padding: '7px', borderRadius: 6, border: 'none', background: '#166534', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                          Payer espèces
-                        </button>
-                        <button onClick={() => { ajouterPaiement(table, montantSelection, 'carte'); setArticlesSelectionnes(a => { const n = { ...a }; delete n[table]; return n; }); }}
-                          style={{ flex: 1, padding: '7px', borderRadius: 6, border: 'none', background: '#1E40AF', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                          Payer carte
-                        </button>
-                        <button onClick={() => setArticlesSelectionnes(a => { const n = { ...a }; delete n[table]; return n; })}
-                          style={{ padding: '7px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#FFF', color: '#666', cursor: 'pointer', fontSize: 12 }}>
-                          Annuler
-                        </button>
+                  {/* Ajouter article en mode modif */}
+                  {enModif && (
+                    <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#FFF8F0' }}>
+                      <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Ajouter un article</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                        {CATALOGUE.map(produit => (
+                          <button key={produit.id} onClick={() => ajouterArticleAddition(table, produit)}
+                            style={{ padding: '6px 8px', borderRadius: 8, border: `0.5px solid #DDD`, background: '#FFF', color: '#1a1a1a', cursor: 'pointer', fontSize: 11, textAlign: 'left' }}>
+                            <div style={{ fontWeight: 500 }}>{produit.nom}</div>
+                            <div style={{ color: '#999', fontSize: 10 }}>{produit.prix.toFixed(2)} TND</div>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   )}
 
+                  {/* Paiements reçus */}
                   {paiements.length > 0 && (
                     <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9' }}>
                       <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Paiements reçus</div>
@@ -465,7 +609,8 @@ function Dashboard() {
                             <span style={{ background: p.mode === 'carte' ? '#DBEAFE' : '#DCFCE7', color: p.mode === 'carte' ? '#1E40AF' : '#166534', padding: '1px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600 }}>
                               {p.mode === 'carte' ? 'Carte' : 'Espèces'}
                             </span>
-                            {p.heure}
+                            {p.label && <span style={{ color: '#999' }}>{p.label}</span>}
+                            <span style={{ color: '#999' }}>{p.heure}</span>
                           </span>
                           <span style={{ fontWeight: 600, color: '#166534' }}>−{p.montant.toFixed(2)} TND</span>
                         </div>
@@ -473,6 +618,7 @@ function Dashboard() {
                     </div>
                   )}
 
+                  {/* Total / Reste */}
                   <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
                       <span style={{ color: '#666' }}>Total</span>
@@ -484,36 +630,13 @@ function Dashboard() {
                         <span style={{ color: '#166534', fontWeight: 600 }}>−{paye.toFixed(2)} TND</span>
                       </div>
                     )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, color: reste === 0 && paye > 0 ? '#166534' : BRUN, borderTop: `0.5px solid #F0F0F0`, paddingTop: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, color: toutRegle ? '#166634' : BRUN, borderTop: `0.5px solid #F0F0F0`, paddingTop: 8, marginTop: 4 }}>
                       <span>Reste à payer</span>
                       <span>{reste.toFixed(2)} TND</span>
                     </div>
                   </div>
 
-                  {!toutRegle && nbSelectionnes === 0 && (
-                    <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
-                      <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Paiement manuel</div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <input type="number" placeholder={`${reste.toFixed(2)}`}
-                          value={tablePopup === table ? montantPaiement : ''}
-                          onFocus={() => setTablePopup(table)}
-                          onChange={e => setMontantPaiement(e.target.value)}
-                          style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: `0.5px solid #DDD`, fontSize: 13, outline: 'none' }} />
-                        <select value={tablePopup === table ? modePaiement : 'especes'}
-                          onFocus={() => setTablePopup(table)}
-                          onChange={e => setModePaiement(e.target.value)}
-                          style={{ padding: '7px 10px', borderRadius: 6, border: `0.5px solid #DDD`, fontSize: 12, background: '#FFF' }}>
-                          <option value="especes">Espèces</option>
-                          <option value="carte">Carte</option>
-                        </select>
-                        <button onClick={() => ajouterPaiement(table, parseFloat(montantPaiement) || reste, modePaiement)}
-                          style={{ padding: '7px 14px', borderRadius: 6, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                          Payer
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
+                  {/* Clôturer */}
                   <div style={{ padding: '12px 16px' }}>
                     <button onClick={() => cloturerTable(table)} disabled={!toutRegle}
                       style={{ width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: toutRegle ? BRUN : '#E0E0E0', color: toutRegle ? CREME : '#999', cursor: toutRegle ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 500 }}>
@@ -527,13 +650,14 @@ function Dashboard() {
         </div>
       )}
 
+      {/* HISTORIQUE */}
       {vue === 'historique' && (
         <div style={{ padding: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Historique des additions</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Tables clôturées — clients partis et payés</p>
-          {historique.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucun historique</div>}
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Tables clôturées aujourd'hui</p>
+          {historique.filter(h => h.date === today).length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucun historique aujourd'hui</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {historique.map(h => (
+            {historique.filter(h => h.date === today).map(h => (
               <div key={h.id} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}` }}>
                 <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', background: '#F9F9F9' }}>
                   <span style={{ fontWeight: 600 }}>Table {h.table}</span>
@@ -560,6 +684,7 @@ function Dashboard() {
                           <span style={{ background: p.mode === 'carte' ? '#DBEAFE' : '#DCFCE7', color: p.mode === 'carte' ? '#1E40AF' : '#166534', padding: '1px 8px', borderRadius: 10, fontSize: 10 }}>
                             {p.mode === 'carte' ? 'Carte' : 'Espèces'}
                           </span>
+                          {p.label && <span>{p.label}</span>}
                         </span>
                         <span>{p.montant.toFixed(2)} TND</span>
                       </div>
@@ -575,11 +700,13 @@ function Dashboard() {
         </div>
       )}
 
+      {/* STOCKS */}
       {vue === 'stocks' && (
         <div style={{ padding: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Stocks journaliers</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Définissez les quantités disponibles aujourd'hui.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Gérez les stocks des produits et suppléments.</p>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Produits</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
             {CATALOGUE.map(produit => {
               const stock = stocks[produit.id] || { actif: false, stock: 10 };
               return (
@@ -589,17 +716,42 @@ function Dashboard() {
                     <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>{produit.categorie} — {produit.prix.toFixed(2)} TND</div>
                   </div>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#666', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={stock.actif}
-                      onChange={e => setStocks(s => ({ ...s, [produit.id]: { ...s[produit.id] || { stock: 10 }, actif: e.target.checked } }))} />
-                    Stock limité
+                    <input type="checkbox" checked={stock.actif} onChange={e => { const nouv = { ...stocks, [produit.id]: { ...(stocks[produit.id] || { stock: 10 }), actif: e.target.checked } }; setStocks(nouv); setDoc(doc(db, 'stocks', 'produits'), nouv); }} />
+                    Limité
                   </label>
                   {stock.actif && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <button onClick={() => setStocks(s => ({ ...s, [produit.id]: { ...s[produit.id], stock: Math.max(0, (s[produit.id]?.stock || 0) - 1) } }))}
-                        style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                      <button onClick={() => { const nouv = { ...stocks, [produit.id]: { ...stocks[produit.id], stock: Math.max(0, (stocks[produit.id]?.stock || 0) - 1) } }; setStocks(nouv); setDoc(doc(db, 'stocks', 'produits'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
                       <span style={{ fontSize: 16, fontWeight: 700, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
-                      <button onClick={() => setStocks(s => ({ ...s, [produit.id]: { ...s[produit.id], stock: (s[produit.id]?.stock || 0) + 1 } }))}
-                        style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                      <button onClick={() => { const nouv = { ...stocks, [produit.id]: { ...stocks[produit.id], stock: (stocks[produit.id]?.stock || 0) + 1 } }; setStocks(nouv); setDoc(doc(db, 'stocks', 'produits'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                      {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>ÉPUISÉ</span>}
+                    </div>
+                  )}
+                  {!stock.actif && <span style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>Illimité</span>}
+                </div>
+              );
+            })}
+          </div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Suppléments</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {SUPPLEMENTS.map(sup => {
+              const produit = CATALOGUE.find(p => p.id === sup.produitId);
+              const stock = stocksSupplements[sup.id] || { actif: false, stock: 10 };
+              return (
+                <div key={sup.id} style={{ background: '#FFF', borderRadius: 10, padding: '14px 18px', border: `0.5px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: '#1a1a1a' }}>{sup.nom}</div>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>Supplément {produit?.nom} — +{sup.prix.toFixed(2)} TND</div>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#666', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={stock.actif} onChange={e => { const nouv = { ...stocksSupplements, [sup.id]: { ...(stocksSupplements[sup.id] || { stock: 10 }), actif: e.target.checked } }; setStocksSupplements(nouv); setDoc(doc(db, 'stocks', 'supplements'), nouv); }} />
+                    Limité
+                  </label>
+                  {stock.actif && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button onClick={() => { const nouv = { ...stocksSupplements, [sup.id]: { ...stocksSupplements[sup.id], stock: Math.max(0, (stocksSupplements[sup.id]?.stock || 0) - 1) } }; setStocksSupplements(nouv); setDoc(doc(db, 'stocks', 'supplements'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
+                      <button onClick={() => { const nouv = { ...stocksSupplements, [sup.id]: { ...stocksSupplements[sup.id], stock: (stocksSupplements[sup.id]?.stock || 0) + 1 } }; setStocksSupplements(nouv); setDoc(doc(db, 'stocks', 'supplements'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                       {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>ÉPUISÉ</span>}
                     </div>
                   )}
@@ -611,6 +763,7 @@ function Dashboard() {
         </div>
       )}
 
+      {/* STATS */}
       {vue === 'stats' && (
         <div style={{ padding: 24 }}>
           {!statsDebloquees ? (
@@ -618,80 +771,140 @@ function Dashboard() {
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>🔒</div>
               <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 8 }}>Accès réservé</h2>
               <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Entrez le mot de passe pour accéder aux statistiques</p>
-              <input type="password" value={mdpStats}
-                onChange={e => setMdpStats(e.target.value)}
+              <input type="password" value={mdpStats} onChange={e => setMdpStats(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { if (mdpStats === MDP_STATS) { setStatsDebloquees(true); setMdpErreur(false); } else setMdpErreur(true); } }}
-                placeholder="Mot de passe"
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${mdpErreur ? '#EF4444' : '#DDD'}`, fontSize: 14, marginBottom: 8, boxSizing: 'border-box' }} />
+                placeholder="Mot de passe" style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${mdpErreur ? '#EF4444' : '#DDD'}`, fontSize: 14, marginBottom: 8, boxSizing: 'border-box' }} />
               {mdpErreur && <p style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>Mot de passe incorrect</p>}
               <button onClick={() => { if (mdpStats === MDP_STATS) { setStatsDebloquees(true); setMdpErreur(false); } else setMdpErreur(true); }}
                 style={{ width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14 }}>
-                Accéder aux statistiques
+                Accéder
               </button>
             </div>
           ) : (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Statistiques — {today}</h2>
-                <button onClick={() => setStatsDebloquees(false)}
-                  style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>
-                  Verrouiller
-                </button>
+                <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Statistiques</h2>
+                <button onClick={() => { setStatsDebloquees(false); setMdpStats(''); }} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>Verrouiller</button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
-                {[
-                  { label: 'Total du jour', value: `${totalJour.toFixed(2)} TND`, color: BRUN },
-                  { label: 'Ticket moyen', value: `${ticketMoyen.toFixed(2)} TND`, color: '#1E40AF' },
-                  { label: 'Tables servies', value: histoAujourdhui.length, color: '#166534' },
-                ].map((s, i) => (
-                  <div key={i} style={{ background: '#FFF', borderRadius: 8, padding: '16px', border: `0.5px solid ${BORDER}` }}>
-                    <div style={{ fontSize: 11, color: '#666', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</div>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-                <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}` }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Produits les plus vendus</div>
-                  {produitsPlusVendus().length === 0 ? <p style={{ color: '#999', fontSize: 13 }}>Aucune donnée</p> :
-                    produitsPlusVendus().map(([nom, qte], i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: `0.5px solid #F0F0F0`, fontSize: 13 }}>
-                        <span>{i + 1}. {nom}</span>
-                        <span style={{ fontWeight: 600, color: BRUN }}>{qte}×</span>
-                      </div>
-                    ))}
-                </div>
-                <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}` }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Table la plus rentable</div>
-                  {tablePlusRentable() ? (
-                    <div style={{ textAlign: 'center', paddingTop: 20 }}>
-                      <div style={{ fontSize: 36, fontWeight: 700, color: BRUN }}>Table {tablePlusRentable()[0]}</div>
-                      <div style={{ fontSize: 20, color: '#666', marginTop: 4 }}>{tablePlusRentable()[1].toFixed(2)} TND</div>
+
+              <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}`, marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Aujourd'hui — {today}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+                  {[
+                    { label: 'Total', value: `${totalJour.toFixed(2)} TND`, color: BRUN },
+                    { label: 'Ticket moyen', value: `${ticketMoyen.toFixed(2)} TND`, color: '#1E40AF' },
+                    { label: 'Tables servies', value: histoAujourdhui.length, color: '#166534' },
+                  ].map((s, i) => (
+                    <div key={i} style={{ background: CREME2, borderRadius: 8, padding: '12px', border: `0.5px solid ${BORDER}` }}>
+                      <div style={{ fontSize: 10, color: '#666', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
                     </div>
-                  ) : <p style={{ color: '#999', fontSize: 13 }}>Aucune donnée</p>}
+                  ))}
                 </div>
-              </div>
-              <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}` }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Export Excel par mois</div>
-                {moisDisponibles.length === 0 ? (
-                  <p style={{ color: '#999', fontSize: 13 }}>Aucun historique disponible</p>
-                ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {moisDisponibles.map(mois => (
-                      <button key={mois} onClick={() => exporterExcel(mois)}
-                        style={{ padding: '8px 16px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#F8F8F8', color: '#1a1a1a', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        {mois}
-                      </button>
+                {produitsPlusVendus().length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Top produits</div>
+                    {produitsPlusVendus().map(([nom, qte], i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, borderBottom: `0.5px solid #F0F0F0` }}>
+                        <span>{i + 1}. {nom}</span><span style={{ fontWeight: 600, color: BRUN }}>{qte}×</span>
+                      </div>
                     ))}
                   </div>
                 )}
               </div>
+
+              <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}`, marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Archives par mois</div>
+                {moisDisponibles.length === 0 ? <p style={{ color: '#999', fontSize: 13 }}>Aucun historique</p> : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {moisDisponibles.map(mois => (
+                      <div key={mois}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, border: `0.5px solid ${moisOuvert === mois ? BRUN : '#DDD'}`, background: moisOuvert === mois ? '#FFF8F4' : '#F8F8F8', cursor: 'pointer' }}
+                          onClick={() => setMoisOuvert(moisOuvert === mois ? null : mois)}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 16 }}>📁</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{mois}</span>
+                            <span style={{ fontSize: 11, color: '#999' }}>{historique.filter(h => h.mois === mois).length} tables</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button onClick={(e) => { e.stopPropagation(); exporterExcel(mois); }}
+                              style={{ padding: '4px 10px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#FFF', color: '#1a1a1a', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                              Excel
+                            </button>
+                            <span style={{ fontSize: 12, color: '#999' }}>{moisOuvert === mois ? '▲' : '▼'}</span>
+                          </div>
+                        </div>
+                        {moisOuvert === mois && (
+                          <div style={{ marginTop: 4, marginLeft: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {joursParMois(mois).map(jour => {
+                              const stats = statsParJour(jour);
+                              return (
+                                <div key={jour}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, border: `0.5px solid ${jourOuvert === jour ? '#1E40AF' : '#E0E0E0'}`, background: jourOuvert === jour ? '#EBF5FB' : '#FAFAFA', cursor: 'pointer' }}
+                                    onClick={() => setJourOuvert(jourOuvert === jour ? null : jour)}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <span style={{ fontSize: 14 }}>📄</span>
+                                      <span style={{ fontSize: 12, fontWeight: 500 }}>{jour}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                      <span style={{ fontSize: 12, color: BRUN, fontWeight: 600 }}>{stats.total.toFixed(2)} TND</span>
+                                      <span style={{ fontSize: 11, color: '#999' }}>{stats.tables} table{stats.tables > 1 ? 's' : ''}</span>
+                                      <span style={{ fontSize: 11, color: '#999' }}>{jourOuvert === jour ? '▲' : '▼'}</span>
+                                    </div>
+                                  </div>
+                                  {jourOuvert === jour && (
+                                    <div style={{ marginLeft: 16, background: '#FFF', borderRadius: 8, padding: 12, border: `0.5px solid #E0E0E0`, marginTop: 4 }}>
+                                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+                                        {[
+                                          { label: 'Total', value: `${stats.total.toFixed(2)} TND`, color: BRUN },
+                                          { label: 'Ticket moyen', value: `${stats.ticket.toFixed(2)} TND`, color: '#1E40AF' },
+                                          { label: 'Tables', value: stats.tables, color: '#166534' },
+                                        ].map((s, i) => (
+                                          <div key={i} style={{ background: CREME2, borderRadius: 6, padding: '8px 10px' }}>
+                                            <div style={{ fontSize: 9, color: '#666', marginBottom: 2, textTransform: 'uppercase' }}>{s.label}</div>
+                                            <div style={{ fontSize: 14, fontWeight: 700, color: s.color }}>{s.value}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {stats.top.length > 0 && (
+                                        <div>
+                                          <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Top produits</div>
+                                          {stats.top.map(([nom, qte], i) => (
+                                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12, borderBottom: `0.5px solid #F5F5F5` }}>
+                                              <span>{i + 1}. {nom}</span><span style={{ fontWeight: 600, color: BRUN }}>{qte}×</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {tablePlusRentable() && (
+                <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Table la plus rentable aujourd'hui</div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 36, fontWeight: 700, color: BRUN }}>Table {tablePlusRentable()[0]}</div>
+                    <div style={{ fontSize: 20, color: '#666', marginTop: 4 }}>{tablePlusRentable()[1].toFixed(2)} TND</div>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
       )}
 
+      {/* POPUP MODIFIER COMMANDE */}
       {commandeSelectee && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#FFF', borderRadius: 12, padding: 24, width: 500, maxHeight: '85vh', overflowY: 'auto' }}>
@@ -705,21 +918,19 @@ function Dashboard() {
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `0.5px solid #F0F0F0` }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, color: '#1a1a1a' }}>{p.nom}</div>
+                    {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444' }}>Sans : {p.ingredientsRetires.join(', ')}</div>}
+                    {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534' }}>+ {Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</div>}
                     {p.ajouteParServeur && <div style={{ fontSize: 10, color: '#8B7355', fontStyle: 'italic' }}>Ajouté par le serveur</div>}
                   </div>
                   <span style={{ fontSize: 13, color: '#999', minWidth: 70, textAlign: 'right' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
-                  <button onClick={() => diminuerArticle(commandeSelectee, i)}
-                    style={{ width: 26, height: 26, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                  <button onClick={() => diminuerArticle(commandeSelectee, i)} style={{ width: 26, height: 26, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
                   <span style={{ fontWeight: 600, minWidth: 16, textAlign: 'center' }}>{p.quantite}</span>
-                  <button onClick={() => ajouterArticle(commandeSelectee, p, false)}
-                    style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
-                  <button onClick={() => supprimerArticle(commandeSelectee, i)}
-                    style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 16, cursor: 'pointer', padding: '0 4px' }}>✕</button>
+                  <button onClick={() => ajouterArticle(commandeSelectee, p, false)} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                  <button onClick={() => supprimerArticle(commandeSelectee, i)} style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 16, cursor: 'pointer', padding: '0 4px' }}>✕</button>
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', fontWeight: 700, fontSize: 15, color: BRUN }}>
-                <span>Total</span>
-                <span>{(commandeSelecteeLive?.total || 0).toFixed(2)} TND</span>
+                <span>Total</span><span>{(commandeSelecteeLive?.total || 0).toFixed(2)} TND</span>
               </div>
             </div>
             <div style={{ marginBottom: 20 }}>

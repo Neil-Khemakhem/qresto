@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, where, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 
 const BRUN = '#7B2B0A';
 const CREME = '#FAF7F2';
@@ -176,6 +176,14 @@ function App() {
   const [vue, setVue] = useState('menu');
   const [envoiOk, setEnvoiOk] = useState(false);
   const [popupProduit, setPopupProduit] = useState(null);
+  const [stocks, setStocks] = useState({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => {
+      if (snap.exists()) setStocks(snap.data());
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db, 'commandes'), where('table', '==', TABLE));
@@ -224,6 +232,16 @@ function App() {
       table: TABLE, produits: produitsPourFirebase, total,
       statut: 'en_attente', heure: serverTimestamp()
     });
+    const stocksSnap = await getDoc(doc(db, 'stocks', 'produits'));
+    if (stocksSnap.exists()) {
+      const stocksData = stocksSnap.data();
+      const updates = {};
+      panier.forEach(p => {
+        const s = stocksData[p.id];
+        if (s?.actif) updates[`${p.id}.stock`] = Math.max(0, (s.stock || 0) - p.quantite);
+      });
+      if (Object.keys(updates).length > 0) await updateDoc(doc(db, 'stocks', 'produits'), updates);
+    }
     setPanier([]);
     setEnvoiOk(true);
     setTimeout(() => setEnvoiOk(false), 6000);
@@ -431,12 +449,18 @@ function App() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, padding: 16, paddingBottom: 100 }}>
         {produitsFiltres.map(produit => {
           const qte = panier.filter(p => p.id === produit.id).reduce((acc, p) => acc + p.quantite, 0);
+          const epuise = stocks[produit.id]?.actif && stocks[produit.id]?.stock === 0;
           return (
             <div key={produit.id}
-              onClick={() => produit.type !== 'boisson' ? setPopupProduit(produit) : null}
-              style={{ background: '#FFF', borderRadius: 12, overflow: 'hidden', border: `0.5px solid ${qte > 0 ? BRUN : BORDER}`, cursor: produit.type !== 'boisson' ? 'pointer' : 'default' }}>
+              onClick={() => !epuise && produit.type !== 'boisson' ? setPopupProduit(produit) : null}
+              style={{ background: '#FFF', borderRadius: 12, overflow: 'hidden', border: `0.5px solid ${qte > 0 ? BRUN : BORDER}`, cursor: !epuise && produit.type !== 'boisson' ? 'pointer' : 'default', opacity: epuise ? 0.5 : 1 }}>
               <div style={{ width: '100%', height: 100, background: CREME2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, position: 'relative' }}>
                 {produit.emoji}
+                {epuise && (
+                  <div style={{ position: 'absolute', top: 8, left: 8, background: '#EF4444', color: '#FFF', borderRadius: 6, fontSize: 10, fontFamily: 'sans-serif', fontWeight: 700, padding: '2px 7px' }}>
+                    Épuisé
+                  </div>
+                )}
                 {qte > 0 && (
                   <div style={{ position: 'absolute', top: 8, right: 8, background: BRUN, color: CREME, borderRadius: '50%', width: 20, height: 20, fontSize: 11, fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {qte}
@@ -456,8 +480,9 @@ function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                   <div style={{ fontSize: 13, color: BRUN, fontFamily: 'sans-serif' }}>{produit.prix.toFixed(2)} TND</div>
                   {produit.type === 'boisson' ? (
-                    <button onClick={(e) => { e.stopPropagation(); ajouterAuPanier(produit); }}
-                      style={{ width: 26, height: 26, borderRadius: '50%', background: BRUN, color: CREME, border: 'none', fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                    <button onClick={(e) => { e.stopPropagation(); if (!epuise) ajouterAuPanier(produit); }}
+                      disabled={epuise}
+                      style={{ width: 26, height: 26, borderRadius: '50%', background: epuise ? '#CCC' : BRUN, color: CREME, border: 'none', fontSize: 18, cursor: epuise ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
                       +
                     </button>
                   ) : (
