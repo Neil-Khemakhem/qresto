@@ -34,7 +34,7 @@ function PopupProduit({ produit, onClose, onAjouter }) {
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
       onClick={onClose}>
       <div
-        style={{ background: '#fff', borderRadius: 20, width: 'calc(100% - 32px)', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+        style={{ background: '#fff', borderRadius: 20, width: 'calc(100% - 32px)', maxWidth: 480, maxHeight: '85vh', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.2)', display: 'flex', flexDirection: 'column' }}
         onClick={e => e.stopPropagation()}>
 
         {/* Photo plein largeur */}
@@ -48,73 +48,78 @@ function PopupProduit({ produit, onClose, onAjouter }) {
           </button>
         </div>
 
-        {/* Contenu */}
-        <div style={{ padding: '16px 20px 32px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-            <h2 style={{ fontSize: 17, fontWeight: 500, color: TEXT, margin: 0, flex: 1, paddingRight: 12 }}>{produit.nom}</h2>
-            <span style={{ fontSize: 15, fontWeight: 500, color: TEXT, flexShrink: 0 }}>{prixTotal.toFixed(2)} TND</span>
+        {/* Contenu scrollable */}
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          <div style={{ padding: '16px 20px 8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+              <h2 style={{ fontSize: 17, fontWeight: 500, color: TEXT, margin: 0, flex: 1, paddingRight: 12 }}>{produit.nom}</h2>
+              <span style={{ fontSize: 15, fontWeight: 500, color: TEXT, flexShrink: 0 }}>{prixTotal.toFixed(2)} TND</span>
+            </div>
+            {produit.description && (
+              <p style={{ fontSize: 12, color: TEXT2, margin: '0 0 14px', lineHeight: 1.5 }}>{produit.description}</p>
+            )}
+            {prixSupplements > 0 && (
+              <p style={{ fontSize: 11, color: TEXT2, margin: '0 0 14px' }}>
+                {produit.prix.toFixed(2)} + {prixSupplements.toFixed(2)} TND suppléments
+              </p>
+            )}
+
+            {produit.provenance && (
+              <div style={{ background: '#F7F6F4', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+                <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Provenance</div>
+                <div style={{ fontSize: 13, color: TEXT }}>{produit.provenance}</div>
+              </div>
+            )}
+
+            {produit.composition && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Composition</div>
+                <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.6 }}>{produit.composition}</div>
+              </div>
+            )}
+
+            {produit.type === 'sale' && produit.ingredients?.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Retirer des ingrédients</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {produit.ingredients.map((ing, i) => {
+                    const retire = ingredientsRetires.includes(ing);
+                    return (
+                      <button key={i} onClick={() => toggleIngredient(ing)}
+                        style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, border: `0.5px solid ${retire ? EPUISE : BORDER}`, background: retire ? '#FEE2E2' : '#fff', color: retire ? EPUISE : TEXT2, cursor: 'pointer', textDecoration: retire ? 'line-through' : 'none' }}>
+                        {ing}
+                      </button>
+                    );
+                  })}
+                </div>
+                {ingredientsRetires.length > 0 && (
+                  <div style={{ fontSize: 11, color: EPUISE, marginTop: 8 }}>✕ Sans : {ingredientsRetires.join(', ')}</div>
+                )}
+              </div>
+            )}
+
+            {produit.type === 'sale' && produit.supplements?.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Ajouter un supplément</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {produit.supplements.map((sup, i) => {
+                    const choisi = supplementsChoisis.find(s => s.nom === sup.nom);
+                    return (
+                      <button key={i} onClick={() => toggleSupplement(sup)}
+                        style={{ padding: '12px 16px', borderRadius: 12, fontSize: 13, border: `0.5px solid ${choisi ? BTN : '#DDD'}`, background: choisi ? BTN : 'transparent', color: choisi ? '#fff' : TEXT, cursor: 'pointer', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>+ {sup.nom}</span>
+                        <span style={{ fontWeight: 500 }}>{choisi ? '✓ ' : ''}{sup.prix.toFixed(2)} TND</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-          {produit.description && (
-            <p style={{ fontSize: 12, color: TEXT2, margin: '0 0 14px', lineHeight: 1.5 }}>{produit.description}</p>
-          )}
-          {prixSupplements > 0 && (
-            <p style={{ fontSize: 11, color: TEXT2, margin: '0 0 14px' }}>
-              {produit.prix.toFixed(2)} + {prixSupplements.toFixed(2)} TND suppléments
-            </p>
-          )}
+        </div>
 
-          {produit.provenance && (
-            <div style={{ background: '#F7F6F4', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-              <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Provenance</div>
-              <div style={{ fontSize: 13, color: TEXT }}>{produit.provenance}</div>
-            </div>
-          )}
-
-          {produit.composition && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Composition</div>
-              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.6 }}>{produit.composition}</div>
-            </div>
-          )}
-
-          {produit.type === 'sale' && produit.ingredients?.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Retirer des ingrédients</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {produit.ingredients.map((ing, i) => {
-                  const retire = ingredientsRetires.includes(ing);
-                  return (
-                    <button key={i} onClick={() => toggleIngredient(ing)}
-                      style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, border: `0.5px solid ${retire ? EPUISE : BORDER}`, background: retire ? '#FEE2E2' : '#fff', color: retire ? EPUISE : TEXT2, cursor: 'pointer', textDecoration: retire ? 'line-through' : 'none' }}>
-                      {ing}
-                    </button>
-                  );
-                })}
-              </div>
-              {ingredientsRetires.length > 0 && (
-                <div style={{ fontSize: 11, color: EPUISE, marginTop: 8 }}>✕ Sans : {ingredientsRetires.join(', ')}</div>
-              )}
-            </div>
-          )}
-
-          {produit.type === 'sale' && produit.supplements?.length > 0 && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 10, color: TEXT2, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Ajouter un supplément</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {produit.supplements.map((sup, i) => {
-                  const choisi = supplementsChoisis.find(s => s.nom === sup.nom);
-                  return (
-                    <button key={i} onClick={() => toggleSupplement(sup)}
-                      style={{ padding: '12px 16px', borderRadius: 12, fontSize: 13, border: `0.5px solid ${choisi ? BTN : '#DDD'}`, background: choisi ? BTN : 'transparent', color: choisi ? '#fff' : TEXT, cursor: 'pointer', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>+ {sup.nom}</span>
-                      <span style={{ fontWeight: 500 }}>{choisi ? '✓ ' : ''}{sup.prix.toFixed(2)} TND</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
+        {/* Bouton Ajouter fixe en bas */}
+        <div style={{ flexShrink: 0, background: '#fff', padding: 12, borderTop: '0.5px solid #F0F0F0' }}>
           <button onClick={handleAjouter}
             style={{ width: '100%', padding: '15px', borderRadius: 24, border: 'none', background: BTN, color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
             Ajouter — {prixTotal.toFixed(2)} TND
@@ -237,10 +242,10 @@ function AppNew() {
   };
 
   const Header = () => (
-    <div style={{ background: '#fff', borderBottom: `0.5px solid ${BORDER}`, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: TEXT, lineHeight: 1.2 }}>QResto</div>
-        <div style={{ fontSize: 10, color: '#BBB', fontStyle: 'italic', marginTop: 2 }}>La Pâtisserie d'Inès × Sans+</div>
+    <div style={{ background: '#fff', borderBottom: `0.5px solid ${BORDER}`, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+      <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: TEXT, lineHeight: 1.2 }}>QResto</div>
+      <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', fontSize: 10, color: '#BBB', fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+        La Pâtisserie d'Inès × Sans+
       </div>
       <div style={{ border: '0.5px solid #DDD', color: '#888', borderRadius: 20, fontSize: 10, padding: '3px 10px', flexShrink: 0 }}>
         Table {TABLE}
@@ -491,14 +496,14 @@ function AppNew() {
               </div>
 
               {/* Contrôles quantité ou bouton + */}
-              {qte > 0 && produit.type === 'boisson' ? (
+              {qte > 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                   <button
-                    onClick={() => panierItem && diminuer(panierItem.cle)}
-                    style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid ${BORDER}`, background: '#fff', color: TEXT, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                    onClick={(e) => { e.stopPropagation(); panierItem && diminuer(panierItem.cle); }}
+                    style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: BTN, color: '#fff', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
                   <span style={{ fontSize: 13, fontWeight: 500, color: TEXT, minWidth: 16, textAlign: 'center' }}>{qte}</span>
                   <button
-                    onClick={() => { if (!stockPlein) ajouterAuPanier(produit); }}
+                    onClick={(e) => { e.stopPropagation(); if (!stockPlein) handleTap(); }}
                     disabled={stockPlein}
                     style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: stockPlein ? '#DDD' : BTN, color: '#fff', fontSize: 18, cursor: stockPlein ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>+</button>
                 </div>
