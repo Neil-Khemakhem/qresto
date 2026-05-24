@@ -73,6 +73,14 @@ function DashboardNew() {
   const [nouveauSupNom, setNouveauSupNom] = useState('');
   const [nouveauSupPrix, setNouveauSupPrix] = useState('');
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [showCaSidebar, setShowCaSidebar] = useState(() => {
+    const v = localStorage.getItem('qresto_show_ca_sidebar');
+    return v === null ? true : v === 'true';
+  });
+  const [hoveredNav, setHoveredNav] = useState(null);
+  const [hoveredTab, setHoveredTab] = useState(null);
+  const [hoveredEl, setHoveredEl] = useState(null);
+  const [hoveredArticle, setHoveredArticle] = useState(null);
 
   useEffect(() => {
     const unsub1 = onSnapshot(collection(db, 'commandes'), (snap) => {
@@ -199,14 +207,27 @@ function DashboardNew() {
   const payerTout = (table, mode) => {
     const reste = resteAPayer(table);
     if (reste <= 0) return;
+    const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const cmdsTable = commandes.filter(c => c.table === table);
+    const nouveauxPaiements = [];
+    cmdsTable.forEach(cmd => {
+      (cmd.produits || []).forEach((p, idx) => {
+        const dejaPaye = montantDejaPayeArticle(table, cmd.id, idx);
+        const resteArticle = Math.max(0, p.prix * p.quantite - dejaPaye);
+        if (resteArticle > 0) {
+          nouveauxPaiements.push({
+            montant: resteArticle,
+            mode,
+            heure,
+            articleKey: `${cmd.id}-${idx}`,
+            label: p.nom,
+          });
+        }
+      });
+    });
     setPaiementsTable(prev => ({
       ...prev,
-      [table]: [...(prev[table] || []), {
-        montant: reste,
-        mode,
-        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-        label: 'Total'
-      }]
+      [table]: [...(prev[table] || []), ...nouveauxPaiements],
     }));
   };
 
@@ -321,59 +342,79 @@ function DashboardNew() {
     XLSX.writeFile(wb, `QResto_${mois}.xlsx`);
   };
 
-  const CommandeCard = ({ commande }) => (
-    <div style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}`, borderTop: `3px solid ${statutColor(commande.statut)}` }}>
-      <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <span style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a' }}>Table {commande.table}</span>
-          <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatHeure(commande.heure)}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ background: statutBg(commande.statut), color: statutColor(commande.statut), padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
-            {statutLabel(commande.statut)}
-          </span>
-          <button onClick={() => supprimerCommande(commande)} title="Supprimer"
-            style={{ background: 'none', border: `0.5px solid #DDD`, borderRadius: 6, cursor: 'pointer', color: '#999', padding: '5px 7px', display: 'flex', alignItems: 'center' }}>
-            <TrashIcon />
-          </button>
-        </div>
-      </div>
-      <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
-        {commande.produits?.map((p, i) => (
-          <div key={i} style={{ padding: '4px 0', fontSize: 13 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#333' }}>
-              <span style={{ fontWeight: 500 }}>{p.quantite}× {p.nom}</span>
-              <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
-            </div>
-            {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444', marginLeft: 8 }}>✕ Sans : {Array.isArray(p.ingredientsRetires) ? p.ingredientsRetires.join(', ') : p.ingredientsRetires}</div>}
-            {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534', marginLeft: 8 }}>+ {Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</div>}
-            {p.ajouteParServeur && <div style={{ fontSize: 10, color: '#8B7355', fontStyle: 'italic', marginLeft: 8 }}>— Ajouté par le serveur</div>}
+  const CommandeCard = ({ commande }) => {
+    const [hovered, setHovered] = useState(false);
+    const [hoveredModifier, setHoveredModifier] = useState(false);
+    const [hoveredAction, setHoveredAction] = useState(false);
+    const [hoveredTrash, setHoveredTrash] = useState(false);
+    const pillStyle = (s) => {
+      if (s === 'en_attente') return { background: '#F5F5F5', color: '#555', border: '0.5px solid #E0E0E0' };
+      if (s === 'en_preparation') return { background: '#F0F4FF', color: '#3366CC', border: '0.5px solid #C5D3F0' };
+      return { background: '#F0F5F0', color: '#2D6A2D', border: '0.5px solid #C0D9C0' };
+    };
+    return (
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          background: '#FFF', borderRadius: 10, overflow: 'hidden',
+          border: `0.5px solid ${hovered ? '#C0C8D8' : '#E2E8F0'}`,
+          boxShadow: hovered ? '0 2px 8px rgba(0,0,0,0.06)' : 'none',
+          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+        }}>
+        <div style={{ padding: '12px 20px', borderBottom: '0.5px solid #F0F0F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <span style={{ fontSize: 15, fontWeight: 500, color: '#1A202C' }}>Table {commande.table}</span>
+            <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatHeure(commande.heure)}</span>
           </div>
-        ))}
-      </div>
-      <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontWeight: 700, fontSize: 15, color: BRUN }}>{commande.total?.toFixed(2)} TND</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => ouvrirModifier(commande)}
-            style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#1a1a1a', cursor: 'pointer', fontSize: 12 }}>
-            Modifier
-          </button>
-          {commande.statut === 'en_attente' && (
-            <button onClick={() => changerStatut(commande.id, 'en_preparation')}
-              style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DBEAFE', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-              En préparation →
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ ...pillStyle(commande.statut), padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 500 }}>
+              {statutLabel(commande.statut)}
+            </span>
+            <button onClick={() => supprimerCommande(commande)} title="Supprimer"
+              onMouseEnter={() => setHoveredTrash(true)}
+              onMouseLeave={() => setHoveredTrash(false)}
+              style={{ background: hoveredTrash ? '#FEF2F2' : 'none', border: '0.5px solid #DDD', borderRadius: 6, cursor: 'pointer', color: hoveredTrash ? '#DC2626' : '#999', padding: '5px 7px', display: 'flex', alignItems: 'center' }}>
+              <TrashIcon />
             </button>
-          )}
-          {commande.statut === 'en_preparation' && (
-            <button onClick={() => changerStatut(commande.id, 'pret')}
-              style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#DCFCE7', color: '#166534', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-              Servi ✓
+          </div>
+        </div>
+        <div style={{ padding: '10px 20px', borderBottom: '0.5px solid #F0F0F0' }}>
+          {commande.produits?.map((p, i) => (
+            <div key={i} style={{ padding: '4px 0', fontSize: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#333' }}>
+                <span style={{ fontWeight: 500 }}>{p.quantite}× {p.nom}</span>
+                <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
+              </div>
+              {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444', marginLeft: 8 }}>✕ Sans : {Array.isArray(p.ingredientsRetires) ? p.ingredientsRetires.join(', ') : p.ingredientsRetires}</div>}
+              {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534', marginLeft: 8 }}>+ {Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</div>}
+              {p.ajouteParServeur && <div style={{ fontSize: 10, color: '#8B7355', fontStyle: 'italic', marginLeft: 8 }}>— Ajouté par le serveur</div>}
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 500, fontSize: 15, color: '#1A202C' }}>{commande.total?.toFixed(2)} TND</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => ouvrirModifier(commande)}
+              onMouseEnter={() => setHoveredModifier(true)}
+              onMouseLeave={() => setHoveredModifier(false)}
+              style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid ${hoveredModifier ? '#B0B8C8' : '#CBD5E0'}`, background: hoveredModifier ? '#F7F8FA' : 'transparent', color: '#718096', cursor: 'pointer', fontSize: 12 }}>
+              Modifier
             </button>
-          )}
+            {(commande.statut === 'en_attente' || commande.statut === 'en_preparation') && (
+              <button
+                onClick={() => changerStatut(commande.id, commande.statut === 'en_attente' ? 'en_preparation' : 'pret')}
+                onMouseEnter={() => setHoveredAction(true)}
+                onMouseLeave={() => setHoveredAction(false)}
+                style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: hoveredAction ? '#2D3748' : '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                {commande.statut === 'en_attente' ? 'En préparation →' : 'Servi ✓'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const navItems = [
     { key: 'commandes', label: 'Commandes', icon: 'ti-receipt' },
@@ -386,7 +427,8 @@ function DashboardNew() {
   ];
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'sans-serif' }}>
+    <div style={{ display: 'flex', minHeight: '100vh' }}>
+      <style>{`* { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; } button { transition: all 0.15s ease; }`}</style>
 
       {/* SIDEBAR */}
       <div style={{ width: 200, minWidth: 200, background: '#0B1220', height: '100vh', position: 'fixed', top: 0, left: 0, display: 'flex', flexDirection: 'column', zIndex: 10 }}>
@@ -403,24 +445,28 @@ function DashboardNew() {
         <nav style={{ flex: 1, padding: '10px 0', overflowY: 'auto' }}>
           {navItems.map(item => {
             const actif = vue === item.key;
+            const navHov = hoveredNav === item.key;
             return (
               <button key={item.key} onClick={() => setVue(item.key)}
+                onMouseEnter={() => setHoveredNav(item.key)}
+                onMouseLeave={() => setHoveredNav(null)}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 10,
                   padding: '9px 18px',
-                  background: actif ? 'rgba(99,179,237,0.10)' : 'transparent',
+                  background: actif ? 'rgba(99,179,237,0.10)' : navHov ? 'rgba(255,255,255,0.06)' : 'transparent',
                   border: 'none',
                   borderLeft: `2px solid ${actif ? '#63B3ED' : 'transparent'}`,
-                  color: actif ? '#ffffff' : 'rgba(255,255,255,0.45)',
+                  color: actif ? '#ffffff' : navHov ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.45)',
                   cursor: 'pointer', fontSize: 13, textAlign: 'left',
+                  transition: 'background 0.15s, color 0.15s',
                 }}>
                 <i className={`ti ${item.icon}`} style={{ fontSize: 16, flexShrink: 0 }} />
                 <span style={{ flex: 1 }}>{item.label}</span>
                 {item.key === 'commandes' && nbAttente > 0 && (
-                  <span style={{ background: 'rgba(226,75,74,0.85)', color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 6px', minWidth: 16, textAlign: 'center' }}>{nbAttente}</span>
+                  <span style={{ background: 'rgba(226,75,74,0.85)', color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 500, padding: '1px 6px', minWidth: 16, textAlign: 'center' }}>{nbAttente}</span>
                 )}
                 {item.key === 'suppressions' && corbeille.length > 0 && (
-                  <span style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', borderRadius: 10, fontSize: 10, fontWeight: 600, padding: '1px 6px' }}>{corbeille.length}</span>
+                  <span style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.7)', borderRadius: 10, fontSize: 10, fontWeight: 500, padding: '1px 6px' }}>{corbeille.length}</span>
                 )}
               </button>
             );
@@ -428,34 +474,78 @@ function DashboardNew() {
         </nav>
 
         {/* Stats du jour */}
-        <div style={{ margin: '0 10px 14px', background: 'rgba(99,179,237,0.05)', borderRadius: 8, padding: '12px 14px', border: '0.5px solid rgba(99,179,237,0.15)' }}>
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Aujourd'hui</div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#ffffff', lineHeight: 1.1 }}>
-            {totalJour.toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400, color: 'rgba(255,255,255,0.5)' }}>TND</span>
+        {showCaSidebar && (
+          <div style={{ margin: '0 10px 14px', background: 'rgba(99,179,237,0.05)', borderRadius: 8, padding: '12px 14px', border: '0.5px solid rgba(99,179,237,0.15)' }}>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Aujourd'hui</div>
+            <div style={{ fontSize: 17, fontWeight: 500, color: '#ffffff', lineHeight: 1.1 }}>
+              {totalJour.toFixed(2)} <span style={{ fontSize: 11, fontWeight: 400, color: 'rgba(255,255,255,0.5)' }}>TND</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
+              {histoAujourdhui.length} table{histoAujourdhui.length !== 1 ? 's' : ''} clôturée{histoAujourdhui.length !== 1 ? 's' : ''}
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>
-            {histoAujourdhui.length} table{histoAujourdhui.length !== 1 ? 's' : ''} clôturée{histoAujourdhui.length !== 1 ? 's' : ''}
-          </div>
-        </div>
+        )}
       </div>
 
       {/* MAIN CONTENT */}
       <div style={{ flex: 1, marginLeft: 200, background: '#F4F6FB', minHeight: '100vh' }}>
 
-      {/* COMMANDES — 3 sous-onglets */}
+      {/* TOPBAR */}
+      <div style={{ height: 48, background: '#fff', borderBottom: '0.5px solid #E2E8F0', display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, position: 'sticky', top: 0, zIndex: 5 }}>
+        <span style={{ fontSize: 14, fontWeight: 500, color: '#1A202C', flexShrink: 0 }}>
+          {navItems.find(n => n.key === vue)?.label || ''}
+        </span>
+        {vue === 'commandes' && (
+          <>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[
+                { key: 'en_attente', label: 'En attente', count: nbAttente },
+                { key: 'en_preparation', label: 'En préparation', count: nbPrep },
+                { key: 'pret', label: 'Servies', count: nbServi },
+              ].map(s => {
+                const actif = sousVueCommandes === s.key;
+                return (
+                  <button key={s.key} onClick={() => setSousVueCommandes(s.key)}
+                    onMouseEnter={() => setHoveredTab(s.key)}
+                    onMouseLeave={() => setHoveredTab(null)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 20,
+                      background: actif ? 'rgba(99,179,237,0.12)' : hoveredTab === s.key ? '#F7F8FA' : 'transparent',
+                      border: actif ? '0.5px solid rgba(99,179,237,0.4)' : '0.5px solid #E2E8F0',
+                      color: actif ? '#2B6CB0' : '#718096',
+                      fontWeight: actif ? 500 : 400,
+                      cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
+                      transition: 'background 0.15s ease',
+                    }}>
+                    {s.label}
+                    {s.count > 0 && (
+                      <span style={{ background: actif ? 'rgba(99,179,237,0.2)' : '#F3F4F6', color: actif ? '#2B6CB0' : '#718096', borderRadius: 10, fontSize: 10, fontWeight: 500, padding: '0 5px' }}>{s.count}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48BB78' }} />
+              <span style={{ fontSize: 12, color: '#48BB78', fontWeight: 500 }}>Live</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* COMMANDES */}
       {vue === 'commandes' && (
         <>
-          <div style={{ display: 'flex', background: CREME, borderBottom: `0.5px solid ${BORDER}`, padding: '0 24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, padding: '16px 24px 0' }}>
             {[
-              { key: 'en_attente', label: 'En attente', count: nbAttente, color: '#92400E', bg: '#FEF3C7' },
-              { key: 'en_preparation', label: 'En préparation', count: nbPrep, color: '#1E40AF', bg: '#DBEAFE' },
-              { key: 'pret', label: 'Servies', count: nbServi, color: '#166534', bg: '#DCFCE7' },
-            ].map(s => (
-              <button key={s.key} onClick={() => setSousVueCommandes(s.key)}
-                style={{ padding: '12px 20px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: sousVueCommandes === s.key ? '#1a1a1a' : '#888', fontWeight: sousVueCommandes === s.key ? 700 : 400, borderBottom: sousVueCommandes === s.key ? `2px solid #1a1a1a` : '2px solid transparent', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {s.label}
-                {s.count > 0 && <span style={{ background: s.bg, color: s.color, padding: '1px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{s.count}</span>}
-              </button>
+              { label: 'En attente', value: nbAttente },
+              { label: 'En préparation', value: nbPrep },
+              { label: 'Ticket moyen du jour', value: `${ticketMoyen.toFixed(2)} TND` },
+            ].map((kpi, i) => (
+              <div key={i} style={{ background: '#fff', border: '0.5px solid #E2E8F0', borderRadius: 10, padding: 20 }}>
+                <div style={{ fontSize: 11, color: '#718096', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>{kpi.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 500, color: '#1A202C' }}>{kpi.value}</div>
+              </div>
             ))}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14, padding: '16px 24px 24px' }}>
@@ -469,14 +559,14 @@ function DashboardNew() {
       {/* SUPPRESSIONS */}
       {vue === 'suppressions' && (
         <div style={{ padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Commandes supprimées</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Commandes supprimées</h2>
           <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Les 10 dernières suppressions.</p>
           {corbeille.length === 0 ? <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune suppression récente</div> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {corbeille.map((cmd, i) => (
                 <div key={i} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}` }}>
                   <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFF8F8' }}>
-                    <div><span style={{ fontWeight: 600 }}>Table {cmd.table}</span><span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>Supprimée à {cmd.supprimeLe}</span></div>
+                    <div><span style={{ fontWeight: 500 }}>Table {cmd.table}</span><span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>Supprimée à {cmd.supprimeLe}</span></div>
                     <button onClick={() => restaurerCommande(cmd)} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #C8B400`, background: '#FFFDE7', color: '#7B6000', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <RestoreIcon /> Restaurer
                     </button>
@@ -490,7 +580,7 @@ function DashboardNew() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ padding: '10px 16px' }}><span style={{ fontWeight: 700, fontSize: 14, color: BRUN }}>{cmd.total?.toFixed(2)} TND</span></div>
+                  <div style={{ padding: '10px 16px' }}><span style={{ fontWeight: 500, fontSize: 14, color: '#1A202C' }}>{cmd.total?.toFixed(2)} TND</span></div>
                 </div>
               ))}
             </div>
@@ -500,11 +590,11 @@ function DashboardNew() {
 
       {/* ADDITIONS */}
       {vue === 'additions' && (
-        <div style={{ padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Additions par table</h2>
+        <div style={{ padding: 24, maxWidth: 1200 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Additions par table</h2>
           <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Cliquez sur un article pour le payer — partiellement ou en entier.</p>
           {tables.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune table active</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
             {tables.map(table => {
               const cmds = commandesParTable(table);
               const total = totalTable(table);
@@ -515,32 +605,32 @@ function DashboardNew() {
               const enModif = additionModifTable === table;
 
               return (
-                <div key={table} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}`, borderTop: `3px solid ${toutRegle ? '#166534' : BRUN}` }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 16, fontWeight: 700 }}>Table {table}</span>
+                <div key={table} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: '0.5px solid #E2E8F0' }}>
+                  <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 14, fontWeight: 500, color: '#1A202C' }}>Table {table}</span>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: toutRegle ? '#166534' : '#92400E', fontWeight: 600 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
+                      <span style={{ fontSize: 12, color: toutRegle ? '#2D6A2D' : '#718096', fontWeight: 500 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
                       <button onClick={() => setAdditionModifTable(enModif ? null : table)}
-                        style={{ padding: '4px 10px', borderRadius: 6, border: `0.5px solid ${enModif ? BRUN : '#DDD'}`, background: enModif ? BRUN : '#F8F8F8', color: enModif ? CREME : '#666', cursor: 'pointer', fontSize: 11 }}>
+                        style={{ padding: '4px 10px', borderRadius: 6, border: enModif ? 'none' : '0.5px solid #CBD5E0', background: enModif ? '#1A202C' : 'transparent', color: enModif ? '#fff' : '#718096', cursor: 'pointer', fontSize: 11 }}>
                         {enModif ? 'Terminer' : 'Modifier'}
                       </button>
                     </div>
                   </div>
                   {!toutRegle && !enModif && (
-                    <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
+                    <div style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
                       <button onClick={() => payerTout(table, 'especes')}
-                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#166534', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
                         Tout payer — Espèces ({reste.toFixed(2)} TND)
                       </button>
                       <button onClick={() => payerTout(table, 'carte')}
-                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#1E40AF', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                        style={{ flex: 1, padding: '8px', borderRadius: 8, border: '0.5px solid #CBD5E0', background: 'transparent', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
                         Tout payer — Carte
                       </button>
                     </div>
                   )}
-                  <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
-                    {!enModif && <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Cliquez un article pour payer</div>}
-                    {enModif && <div style={{ fontSize: 11, color: BRUN, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Mode modification</div>}
+                  <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0` }}>
+                    {!enModif && <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Cliquez un article pour payer</div>}
+                    {enModif && <div style={{ fontSize: 11, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Mode modification</div>}
                     {cmds.map((cmd, i) => (
                       <div key={cmd.id} style={{ marginBottom: i < cmds.length - 1 ? 8 : 0 }}>
                         <div style={{ fontSize: 11, color: '#999', marginBottom: 3 }}>Commande {i + 1} — {formatHeure(cmd.heure)}</div>
@@ -550,11 +640,24 @@ function DashboardNew() {
                           const resteArticle = Math.max(0, prixArticle - dejaPayePourCetArticle);
                           const estActif = articleActif?.cmdId === cmd.id && articleActif?.idx === j;
                           const estPayeTotal = dejaPayePourCetArticle >= prixArticle;
+                          const articleKey = `${cmd.id}-${j}`;
+                          const isHov = hoveredArticle === articleKey && !estPayeTotal && !enModif;
                           return (
                             <div key={j} style={{ marginBottom: 4 }}>
-                              <div onClick={() => { if (enModif) return; if (estActif) { setArticleActif(null); setMontantArticle(''); return; } setArticleActif({ table, cmdId: cmd.id, idx: j, montantMax: resteArticle }); setMontantArticle(resteArticle.toFixed(2)); }}
-                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '7px 10px', borderRadius: 6, cursor: enModif ? 'default' : 'pointer', background: estPayeTotal ? '#F0FFF4' : estActif ? '#EBF5FB' : '#F9F9F9', border: `0.5px solid ${estPayeTotal ? '#166534' : estActif ? '#1E40AF' : '#E5E5E5'}` }}>
-                                <span style={{ flex: 1, color: estPayeTotal ? '#166534' : '#333' }}>
+                              <div
+                                onClick={() => { if (enModif) return; if (estActif) { setArticleActif(null); setMontantArticle(''); return; } setArticleActif({ table, cmdId: cmd.id, idx: j, montantMax: resteArticle }); setMontantArticle(resteArticle.toFixed(2)); }}
+                                onMouseEnter={() => { if (!estPayeTotal && !enModif) setHoveredArticle(articleKey); }}
+                                onMouseLeave={() => setHoveredArticle(null)}
+                                style={{
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                  fontSize: 13, padding: '7px 10px', borderRadius: 6,
+                                  cursor: enModif ? 'default' : estPayeTotal ? 'default' : 'pointer',
+                                  background: estPayeTotal ? '#F0F5F0' : estActif ? '#F7F8FA' : isHov ? 'rgba(49,130,206,0.06)' : '#F9F9F9',
+                                  border: `0.5px solid ${estPayeTotal ? '#C0D9C0' : estActif ? '#C0C8D8' : '#E5E5E5'}`,
+                                  borderLeft: isHov ? '2px solid #3182CE' : undefined,
+                                  transition: 'all 0.15s ease',
+                                }}>
+                                <span style={{ flex: 1, color: estPayeTotal ? '#2D6A2D' : '#333' }}>
                                   {p.quantite}× {p.nom}
                                   {p.supplementsChoisis?.length > 0 && <span style={{ fontSize: 10, color: '#166534', marginLeft: 4 }}>+{Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</span>}
                                 </span>
@@ -562,7 +665,7 @@ function DashboardNew() {
                                   {dejaPayePourCetArticle > 0 && !estPayeTotal && (
                                     <span style={{ fontSize: 10, color: '#166534', background: '#DCFCE7', padding: '1px 6px', borderRadius: 10 }}>−{dejaPayePourCetArticle.toFixed(2)}</span>
                                   )}
-                                  <span style={{ color: estPayeTotal ? '#166534' : '#333', fontWeight: estPayeTotal ? 600 : 400 }}>
+                                  <span style={{ color: estPayeTotal ? '#2D6A2D' : '#333', fontWeight: estPayeTotal ? 500 : 400 }}>
                                     {estPayeTotal ? '✓ Payé' : `${resteArticle.toFixed(2)} TND`}
                                   </span>
                                   {enModif && (
@@ -572,16 +675,16 @@ function DashboardNew() {
                                 </div>
                               </div>
                               {estActif && !enModif && (
-                                <div style={{ background: '#EBF5FB', borderRadius: '0 0 8px 8px', padding: '10px 12px', border: `0.5px solid #1E40AF`, borderTop: 'none', marginTop: -2 }}>
-                                  <div style={{ fontSize: 11, color: '#1E40AF', marginBottom: 8, fontWeight: 600 }}>Montant à encaisser pour "{p.nom}"</div>
+                                <div style={{ background: '#F7F8FA', borderRadius: '0 0 8px 8px', padding: '10px 12px', border: '0.5px solid #E2E8F0', borderTop: 'none', marginTop: -2 }}>
+                                  <div style={{ fontSize: 11, color: '#718096', marginBottom: 8, fontWeight: 500 }}>Montant à encaisser pour "{p.nom}"</div>
                                   <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                                    <input value={montantArticle} onChange={e => setMontantArticle(e.target.value)} style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: `0.5px solid #1E40AF`, fontSize: 13, outline: 'none', MozAppearance: 'textfield' }} placeholder="Montant" />
-                                    <button onClick={() => setMontantArticle((resteArticle / 2).toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: `0.5px solid #1E40AF`, background: '#FFF', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>50%</button>
-                                    <button onClick={() => setMontantArticle(resteArticle.toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: `0.5px solid #1E40AF`, background: '#FFF', color: '#1E40AF', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>100%</button>
+                                    <input value={montantArticle} onChange={e => setMontantArticle(e.target.value)} style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: '0.5px solid #CBD5E0', fontSize: 13, outline: 'none', MozAppearance: 'textfield' }} placeholder="Montant" />
+                                    <button onClick={() => setMontantArticle((resteArticle / 2).toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: '#FFF', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>50%</button>
+                                    <button onClick={() => setMontantArticle(resteArticle.toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: '#FFF', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>100%</button>
                                   </div>
                                   <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'especes')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#166534', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Espèces</button>
-                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'carte')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#1E40AF', color: '#FFF', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Carte</button>
+                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'especes')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Espèces</button>
+                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'carte')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: 'transparent', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Carte</button>
                                     <button onClick={() => { setArticleActif(null); setMontantArticle(''); }} style={{ padding: '8px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#FFF', color: '#666', cursor: 'pointer', fontSize: 12 }}>✕</button>
                                   </div>
                                 </div>
@@ -593,7 +696,7 @@ function DashboardNew() {
                     ))}
                   </div>
                   {enModif && (
-                    <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#FFF8F0' }}>
+                    <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#FFF8F0' }}>
                       <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Ajouter un article</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
                         {CATALOGUE.map(produit => (
@@ -607,39 +710,39 @@ function DashboardNew() {
                     </div>
                   )}
                   {paiements.length > 0 && (
-                    <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9' }}>
-                      <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Paiements reçus</div>
+                    <div style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9' }}>
+                      <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Paiements reçus</div>
                       {paiements.map((p, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#333', padding: '3px 0' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ background: p.mode === 'carte' ? '#DBEAFE' : '#DCFCE7', color: p.mode === 'carte' ? '#1E40AF' : '#166534', padding: '1px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600 }}>{p.mode === 'carte' ? 'Carte' : 'Espèces'}</span>
+                            <span style={{ background: '#F3F4F6', color: '#555', padding: '1px 8px', borderRadius: 10, fontSize: 10, fontWeight: 500 }}>{p.mode === 'carte' ? 'Carte' : 'Espèces'}</span>
                             {p.label && <span style={{ color: '#999' }}>{p.label}</span>}
                             <span style={{ color: '#999' }}>{p.heure}</span>
                           </span>
-                          <span style={{ fontWeight: 600, color: '#166534' }}>−{p.montant.toFixed(2)} TND</span>
+                          <span style={{ fontWeight: 500, color: '#166534' }}>−{p.montant.toFixed(2)} TND</span>
                         </div>
                       ))}
                     </div>
                   )}
-                  <div style={{ padding: '12px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
+                  <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
                       <span style={{ color: '#666' }}>Total</span>
-                      <span style={{ fontWeight: 600 }}>{total.toFixed(2)} TND</span>
+                      <span style={{ fontWeight: 500 }}>{total.toFixed(2)} TND</span>
                     </div>
                     {paye > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
                         <span style={{ color: '#666' }}>Payé</span>
-                        <span style={{ color: '#166534', fontWeight: 600 }}>−{paye.toFixed(2)} TND</span>
+                        <span style={{ color: '#166534', fontWeight: 500 }}>−{paye.toFixed(2)} TND</span>
                       </div>
                     )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, color: toutRegle ? '#166634' : BRUN, borderTop: `0.5px solid #F0F0F0`, paddingTop: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 500, color: '#1A202C', borderTop: `0.5px solid #F0F0F0`, paddingTop: 8, marginTop: 4 }}>
                       <span>Reste à payer</span>
                       <span>{reste.toFixed(2)} TND</span>
                     </div>
                   </div>
-                  <div style={{ padding: '12px 16px' }}>
+                  <div style={{ padding: '10px 14px' }}>
                     <button onClick={() => cloturerTable(table)} disabled={!toutRegle}
-                      style={{ width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: toutRegle ? BRUN : '#E0E0E0', color: toutRegle ? CREME : '#999', cursor: toutRegle ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 500 }}>
+                      style={{ width: '100%', padding: '10px', borderRadius: 8, border: 'none', background: toutRegle ? '#1A202C' : '#E0E0E0', color: toutRegle ? '#fff' : '#999', cursor: toutRegle ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 500 }}>
                       {toutRegle ? 'Clôturer la table ✓' : "Régler d'abord le solde"}
                     </button>
                   </div>
@@ -653,14 +756,14 @@ function DashboardNew() {
       {/* HISTORIQUE */}
       {vue === 'historique' && (
         <div style={{ padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Historique des additions</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Historique des additions</h2>
           <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Tables clôturées aujourd'hui</p>
           {historique.filter(h => h.date === today).length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucun historique aujourd'hui</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {historique.filter(h => h.date === today).map(h => (
               <div key={h.id} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: `0.5px solid ${BORDER}` }}>
                 <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', background: '#F9F9F9' }}>
-                  <span style={{ fontWeight: 600 }}>Table {h.table}</span>
+                  <span style={{ fontWeight: 500 }}>Table {h.table}</span>
                   <span style={{ fontSize: 12, color: '#999' }}>{h.date} — {formatHeure(h.heureCloture)}</span>
                 </div>
                 <div style={{ padding: '10px 16px', borderBottom: `0.5px solid #F0F0F0` }}>
@@ -681,7 +784,7 @@ function DashboardNew() {
                     {h.paiements.map((p, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555', padding: '2px 0' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ background: p.mode === 'carte' ? '#DBEAFE' : '#DCFCE7', color: p.mode === 'carte' ? '#1E40AF' : '#166534', padding: '1px 8px', borderRadius: 10, fontSize: 10 }}>{p.mode === 'carte' ? 'Carte' : 'Espèces'}</span>
+                          <span style={{ background: '#F3F4F6', color: '#555', padding: '1px 8px', borderRadius: 10, fontSize: 10 }}>{p.mode === 'carte' ? 'Carte' : 'Espèces'}</span>
                           {p.label && <span>{p.label}</span>}
                         </span>
                         <span>{p.montant.toFixed(2)} TND</span>
@@ -690,7 +793,7 @@ function DashboardNew() {
                   </div>
                 )}
                 <div style={{ padding: '10px 16px' }}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: BRUN }}>Total payé : {h.total?.toFixed(2)} TND</span>
+                  <span style={{ fontWeight: 500, fontSize: 15, color: '#1A202C' }}>Total payé : {h.total?.toFixed(2)} TND</span>
                 </div>
               </div>
             ))}
@@ -701,9 +804,9 @@ function DashboardNew() {
       {/* STOCKS */}
       {vue === 'stocks' && (
         <div style={{ padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 4 }}>Stocks journaliers</h2>
+          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Stocks journaliers</h2>
           <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Gérez les stocks des produits et suppléments.</p>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Produits</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 500, color: '#1a1a1a', marginBottom: 12 }}>Produits</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
             {CATALOGUE.map(produit => {
               const stock = stocks[produit.id] || { actif: false, stock: 10 };
@@ -720,9 +823,9 @@ function DashboardNew() {
                   {stock.actif && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button onClick={() => { const nouv = { ...stocks, [produit.id]: { ...stocks[produit.id], stock: Math.max(0, (stocks[produit.id]?.stock || 0) - 1) } }; setStocks(nouv); setDoc(doc(db, 'stocks', 'produits'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
+                      <span style={{ fontSize: 16, fontWeight: 500, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
                       <button onClick={() => { const nouv = { ...stocks, [produit.id]: { ...stocks[produit.id], stock: (stocks[produit.id]?.stock || 0) + 1 } }; setStocks(nouv); setDoc(doc(db, 'stocks', 'produits'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
-                      {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>ÉPUISÉ</span>}
+                      {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 500 }}>ÉPUISÉ</span>}
                     </div>
                   )}
                   {!stock.actif && <span style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>Illimité</span>}
@@ -730,7 +833,7 @@ function DashboardNew() {
               );
             })}
           </div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Suppléments</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 500, color: '#1a1a1a', marginBottom: 12 }}>Suppléments</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {SUPPLEMENTS.map(sup => {
               const produit = CATALOGUE.find(p => p.id === sup.produitId);
@@ -748,9 +851,9 @@ function DashboardNew() {
                   {stock.actif && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button onClick={() => { const nouv = { ...stocksSupplements, [sup.id]: { ...stocksSupplements[sup.id], stock: Math.max(0, (stocksSupplements[sup.id]?.stock || 0) - 1) } }; setStocksSupplements(nouv); setDoc(doc(db, 'stocks', 'supplements'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
-                      <span style={{ fontSize: 16, fontWeight: 700, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
+                      <span style={{ fontSize: 16, fontWeight: 500, color: stock.stock === 0 ? '#EF4444' : '#1a1a1a', minWidth: 28, textAlign: 'center' }}>{stock.stock}</span>
                       <button onClick={() => { const nouv = { ...stocksSupplements, [sup.id]: { ...stocksSupplements[sup.id], stock: (stocksSupplements[sup.id]?.stock || 0) + 1 } }; setStocksSupplements(nouv); setDoc(doc(db, 'stocks', 'supplements'), nouv); }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
-                      {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 600 }}>ÉPUISÉ</span>}
+                      {stock.stock === 0 && <span style={{ fontSize: 11, color: '#EF4444', fontWeight: 500 }}>ÉPUISÉ</span>}
                     </div>
                   )}
                   {!stock.actif && <span style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>Illimité</span>}
@@ -767,7 +870,7 @@ function DashboardNew() {
           {!statsDebloquees ? (
             <div style={{ maxWidth: 360, margin: '60px auto', textAlign: 'center' }}>
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>🔒</div>
-              <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', marginBottom: 8 }}>Accès réservé</h2>
+              <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 8 }}>Accès réservé</h2>
               <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Entrez le mot de passe pour accéder aux statistiques</p>
               <input type="password" value={mdpStats} onChange={e => setMdpStats(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { if (mdpStats === MDP_STATS) { setStatsDebloquees(true); setMdpErreur(false); } else setMdpErreur(true); } }}
@@ -781,7 +884,7 @@ function DashboardNew() {
           ) : (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Statistiques</h2>
+                <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', margin: 0 }}>Statistiques</h2>
                 <button onClick={() => { setStatsDebloquees(false); setMdpStats(''); }} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>Verrouiller</button>
               </div>
               <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -791,17 +894,35 @@ function DashboardNew() {
                 </button>
                 {migrationStatus && <span style={{ fontSize: 13, color: '#666' }}>{migrationStatus}</span>}
               </div>
+              <div style={{ background: '#fff', borderRadius: 10, padding: '14px 16px', border: '0.5px solid #E2E8F0', marginBottom: 20 }}>
+                <div style={{ fontSize: 12, color: '#718096', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Paramètres affichage</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: '#1A202C', fontWeight: 500 }}>CA visible en sidebar</div>
+                    <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{showCaSidebar ? 'Le bloc CA du jour est affiché en bas de la sidebar' : 'Le bloc CA du jour est masqué'}</div>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const next = !showCaSidebar;
+                      setShowCaSidebar(next);
+                      localStorage.setItem('qresto_show_ca_sidebar', String(next));
+                    }}
+                    style={{ width: 40, height: 22, borderRadius: 11, background: showCaSidebar ? '#1A202C' : '#CBD5E0', cursor: 'pointer', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}>
+                    <div style={{ position: 'absolute', top: 3, left: showCaSidebar ? 20 : 3, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                  </div>
+                </div>
+              </div>
               <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}`, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Aujourd'hui — {today}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a', marginBottom: 12 }}>Aujourd'hui — {today}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
                   {[
-                    { label: 'Total', value: `${totalJour.toFixed(2)} TND`, color: BRUN },
-                    { label: 'Ticket moyen', value: `${ticketMoyen.toFixed(2)} TND`, color: '#1E40AF' },
-                    { label: 'Tables servies', value: histoAujourdhui.length, color: '#166534' },
+                    { label: 'Total', value: `${totalJour.toFixed(2)} TND`, color: '#1A202C' },
+                    { label: 'Ticket moyen', value: `${ticketMoyen.toFixed(2)} TND`, color: '#1A202C' },
+                    { label: 'Tables servies', value: histoAujourdhui.length, color: '#1A202C' },
                   ].map((s, i) => (
-                    <div key={i} style={{ background: CREME2, borderRadius: 8, padding: '12px', border: `0.5px solid ${BORDER}` }}>
+                    <div key={i} style={{ background: '#F8F9FA', borderRadius: 8, padding: '12px', border: '0.5px solid #E2E8F0' }}>
                       <div style={{ fontSize: 10, color: '#666', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 18, fontWeight: 500, color: s.color }}>{s.value}</div>
                     </div>
                   ))}
                 </div>
@@ -810,23 +931,23 @@ function DashboardNew() {
                     <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Top produits</div>
                     {produitsPlusVendus().map(([nom, qte], i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, borderBottom: `0.5px solid #F0F0F0` }}>
-                        <span>{i + 1}. {nom}</span><span style={{ fontWeight: 600, color: BRUN }}>{qte}×</span>
+                        <span>{i + 1}. {nom}</span><span style={{ fontWeight: 500, color: '#1A202C' }}>{qte}×</span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
               <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}`, marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Archives par mois</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a', marginBottom: 12 }}>Archives par mois</div>
                 {moisDisponibles.length === 0 ? <p style={{ color: '#999', fontSize: 13 }}>Aucun historique</p> : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {moisDisponibles.map(mois => (
                       <div key={mois}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, border: `0.5px solid ${moisOuvert === mois ? BRUN : '#DDD'}`, background: moisOuvert === mois ? '#FFF8F4' : '#F8F8F8', cursor: 'pointer' }}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, border: `0.5px solid ${moisOuvert === mois ? '#C0C8D8' : '#E2E8F0'}`, background: moisOuvert === mois ? '#F7F8FA' : '#F8F8F8', cursor: 'pointer' }}
                           onClick={() => setMoisOuvert(moisOuvert === mois ? null : mois)}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: 16 }}>📁</span>
-                            <span style={{ fontSize: 13, fontWeight: 600 }}>{mois}</span>
+                            <span style={{ fontSize: 13, fontWeight: 500 }}>{mois}</span>
                             <span style={{ fontSize: 11, color: '#999' }}>{historique.filter(h => h.mois === mois).length} tables</span>
                           </div>
                           <div style={{ display: 'flex', gap: 8 }}>
@@ -844,14 +965,14 @@ function DashboardNew() {
                               const stats = statsParJour(jour);
                               return (
                                 <div key={jour}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, border: `0.5px solid ${jourOuvert === jour ? '#1E40AF' : '#E0E0E0'}`, background: jourOuvert === jour ? '#EBF5FB' : '#FAFAFA', cursor: 'pointer' }}
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, border: `0.5px solid ${jourOuvert === jour ? '#C0C8D8' : '#E0E0E0'}`, background: jourOuvert === jour ? '#F7F8FA' : '#FAFAFA', cursor: 'pointer' }}
                                     onClick={() => setJourOuvert(jourOuvert === jour ? null : jour)}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                       <span style={{ fontSize: 14 }}>📄</span>
                                       <span style={{ fontSize: 12, fontWeight: 500 }}>{jour}</span>
                                     </div>
                                     <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                                      <span style={{ fontSize: 12, color: BRUN, fontWeight: 600 }}>{stats.total.toFixed(2)} TND</span>
+                                      <span style={{ fontSize: 12, color: '#1A202C', fontWeight: 500 }}>{stats.total.toFixed(2)} TND</span>
                                       <span style={{ fontSize: 11, color: '#999' }}>{stats.tables} table{stats.tables > 1 ? 's' : ''}</span>
                                       <span style={{ fontSize: 11, color: '#999' }}>{jourOuvert === jour ? '▲' : '▼'}</span>
                                     </div>
@@ -860,13 +981,13 @@ function DashboardNew() {
                                     <div style={{ marginLeft: 16, background: '#FFF', borderRadius: 8, padding: 12, border: `0.5px solid #E0E0E0`, marginTop: 4 }}>
                                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
                                         {[
-                                          { label: 'Total', value: `${stats.total.toFixed(2)} TND`, color: BRUN },
-                                          { label: 'Ticket moyen', value: `${stats.ticket.toFixed(2)} TND`, color: '#1E40AF' },
-                                          { label: 'Tables', value: stats.tables, color: '#166534' },
+                                          { label: 'Total', value: `${stats.total.toFixed(2)} TND`, color: '#1A202C' },
+                                          { label: 'Ticket moyen', value: `${stats.ticket.toFixed(2)} TND`, color: '#1A202C' },
+                                          { label: 'Tables', value: stats.tables, color: '#1A202C' },
                                         ].map((s, i) => (
-                                          <div key={i} style={{ background: CREME2, borderRadius: 6, padding: '8px 10px' }}>
+                                          <div key={i} style={{ background: '#F8F9FA', borderRadius: 6, padding: '8px 10px' }}>
                                             <div style={{ fontSize: 9, color: '#666', marginBottom: 2, textTransform: 'uppercase' }}>{s.label}</div>
-                                            <div style={{ fontSize: 14, fontWeight: 700, color: s.color }}>{s.value}</div>
+                                            <div style={{ fontSize: 14, fontWeight: 500, color: s.color }}>{s.value}</div>
                                           </div>
                                         ))}
                                       </div>
@@ -875,7 +996,7 @@ function DashboardNew() {
                                           <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Top produits</div>
                                           {stats.top.map(([nom, qte], i) => (
                                             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12, borderBottom: `0.5px solid #F5F5F5` }}>
-                                              <span>{i + 1}. {nom}</span><span style={{ fontWeight: 600, color: BRUN }}>{qte}×</span>
+                                              <span>{i + 1}. {nom}</span><span style={{ fontWeight: 500, color: '#1A202C' }}>{qte}×</span>
                                             </div>
                                           ))}
                                         </div>
@@ -894,9 +1015,9 @@ function DashboardNew() {
               </div>
               {tablePlusRentable() && (
                 <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}` }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Table la plus rentable aujourd'hui</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a', marginBottom: 12 }}>Table la plus rentable aujourd'hui</div>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: 36, fontWeight: 700, color: BRUN }}>Table {tablePlusRentable()[0]}</div>
+                    <div style={{ fontSize: 36, fontWeight: 500, color: '#1A202C' }}>Table {tablePlusRentable()[0]}</div>
                     <div style={{ fontSize: 20, color: '#666', marginTop: 4 }}>{tablePlusRentable()[1].toFixed(2)} TND</div>
                   </div>
                 </div>
@@ -910,7 +1031,7 @@ function DashboardNew() {
       {vue === 'menu' && !produitEdite && (
         <div style={{ padding: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Gestion du menu</h2>
+            <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', margin: 0 }}>Gestion du menu</h2>
             <button onClick={() => setProduitEdite({ id: Date.now().toString(), nom: '', prix: '', emoji: '', categorie: '', type: 'boisson', description: '', provenance: '', composition: '', ingredients: [], supplements: [], actif: true, photoURL: '' })}
               style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
               + Nouveau produit
@@ -918,7 +1039,7 @@ function DashboardNew() {
           </div>
           {Object.entries(menuProduits.reduce((acc, p) => { (acc[p.categorie] = acc[p.categorie] || []).push(p); return acc; }, {})).map(([cat, produits]) => (
             <div key={cat} style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>{cat}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>{cat}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {produits.map(p => (
                   <div key={p.id} onClick={() => setProduitEdite({ ...p, prix: String(p.prix), ingredients: p.ingredients || [], supplements: p.supplements || [] })}
@@ -928,7 +1049,7 @@ function DashboardNew() {
                       <div style={{ fontSize: 14, fontWeight: 500, color: '#1a1a1a' }}>{p.nom}</div>
                       <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>{p.prix?.toFixed ? p.prix.toFixed(2) : p.prix} TND — {p.type}</div>
                     </div>
-                    <div style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: p.actif ? '#DCFCE7' : '#F3F4F6', color: p.actif ? '#166534' : '#999', fontWeight: 600 }}>{p.actif ? 'Actif' : 'Inactif'}</div>
+                    <div style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: p.actif ? '#DCFCE7' : '#F3F4F6', color: p.actif ? '#166534' : '#999', fontWeight: 500 }}>{p.actif ? 'Actif' : 'Inactif'}</div>
                   </div>
                 ))}
               </div>
@@ -949,7 +1070,7 @@ function DashboardNew() {
           <div style={{ padding: 24, maxWidth: 640 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
               <button onClick={() => setProduitEdite(null)} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>← Retour</button>
-              <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>{produitEdite.nom || 'Nouveau produit'}</h2>
+              <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', margin: 0 }}>{produitEdite.nom || 'Nouveau produit'}</h2>
             </div>
             {champ('Nom', 'nom')}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
@@ -983,7 +1104,7 @@ function DashboardNew() {
                 {produitEdite.ingredients.map((ing, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: CREME2, borderRadius: 20, padding: '4px 10px', fontSize: 12 }}>
                     {ing}
-                    <span onClick={() => setProduitEdite(p => ({ ...p, ingredients: p.ingredients.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontWeight: 700, marginLeft: 2 }}>×</span>
+                    <span onClick={() => setProduitEdite(p => ({ ...p, ingredients: p.ingredients.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontWeight: 500, marginLeft: 2 }}>×</span>
                   </div>
                 ))}
               </div>
@@ -1000,8 +1121,8 @@ function DashboardNew() {
               {produitEdite.supplements.map((s, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ flex: 1, fontSize: 13 }}>{s.nom}</span>
-                  <span style={{ fontSize: 13, color: BRUN, fontWeight: 500 }}>+{Number(s.prix).toFixed(2)} TND</span>
-                  <span onClick={() => setProduitEdite(p => ({ ...p, supplements: p.supplements.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontSize: 16, fontWeight: 700 }}>×</span>
+                  <span style={{ fontSize: 13, color: '#718096', fontWeight: 500 }}>+{Number(s.prix).toFixed(2)} TND</span>
+                  <span onClick={() => setProduitEdite(p => ({ ...p, supplements: p.supplements.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontSize: 16, fontWeight: 500 }}>×</span>
                 </div>
               ))}
               <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
@@ -1064,7 +1185,7 @@ function DashboardNew() {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#FFF', borderRadius: 12, padding: 24, width: 500, maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', margin: 0 }}>Modifier — Table {commandeSelectee.table}</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', margin: 0 }}>Modifier — Table {commandeSelectee.table}</h3>
               <button onClick={() => setCommandeSelectee(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#999' }}>✕</button>
             </div>
             <div style={{ marginBottom: 20 }}>
@@ -1079,12 +1200,12 @@ function DashboardNew() {
                   </div>
                   <span style={{ fontSize: 13, color: '#999', minWidth: 70, textAlign: 'right' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
                   <button onClick={() => diminuerArticle(commandeSelectee, i)} style={{ width: 26, height: 26, borderRadius: '50%', border: `0.5px solid #DDD`, background: '#F5F5F5', color: '#333', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
-                  <span style={{ fontWeight: 600, minWidth: 16, textAlign: 'center' }}>{p.quantite}</span>
+                  <span style={{ fontWeight: 500, minWidth: 16, textAlign: 'center' }}>{p.quantite}</span>
                   <button onClick={() => ajouterArticle(commandeSelectee, p, false)} style={{ width: 26, height: 26, borderRadius: '50%', border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                   <button onClick={() => supprimerArticle(commandeSelectee, i)} style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 16, cursor: 'pointer', padding: '0 4px' }}>✕</button>
                 </div>
               ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', fontWeight: 700, fontSize: 15, color: BRUN }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0', fontWeight: 500, fontSize: 15, color: '#1A202C' }}>
                 <span>Total</span><span>{(commandeSelecteeLive?.total || 0).toFixed(2)} TND</span>
               </div>
             </div>
@@ -1101,7 +1222,7 @@ function DashboardNew() {
               </div>
             </div>
             <button onClick={() => { setCommandeSelectee(null); setModifie(false); }}
-              style={{ width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: modifie ? '#166534' : '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+              style={{ width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
               {modifie ? '✓ Modifications enregistrées — Fermer' : 'Fermer'}
             </button>
           </div>
