@@ -252,7 +252,7 @@ function App() {
       {nbArticles > 0 && (
         <button onClick={() => setVue('panier')}
           style={{
-            position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)',
+            position: 'absolute', right: 16, top: 16,
             background: BRUN, color: CREME, border: 'none', borderRadius: 20,
             padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6
           }}>
