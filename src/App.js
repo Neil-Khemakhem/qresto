@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, query, where, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, where, serverTimestamp, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 
 const BRUN = '#7B2B0A';
 const CREME = '#FAF7F2';
@@ -176,11 +176,11 @@ function App() {
   const [vue, setVue] = useState('menu');
   const [envoiOk, setEnvoiOk] = useState(false);
   const [popupProduit, setPopupProduit] = useState(null);
-  const [stocks, setStocks] = useState({});
+  const [stocksProduits, setStocksProduits] = useState({});
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => {
-      if (snap.exists()) setStocks(snap.data());
+      if (snap.exists()) setStocksProduits(snap.data());
     });
     return () => unsub();
   }, []);
@@ -204,6 +204,11 @@ function App() {
   const nbArticles = panier.reduce((acc, p) => acc + p.quantite, 0);
 
   const ajouterAuPanier = (produit, ingredientsRetires = [], supplementsChoisis = []) => {
+    const stockProduit = stocksProduits[produit.id];
+    if (stockProduit?.actif) {
+      const qtePanier = panier.filter(p => p.id === produit.id).reduce((acc, p) => acc + p.quantite, 0);
+      if (qtePanier + 1 > stockProduit.stock) return;
+    }
     const cle = `${produit.id}-${ingredientsRetires.join(',')}-${supplementsChoisis.map(s => s.nom).join(',')}`;
     const existe = panier.find(p => p.cle === cle);
     if (existe) {
@@ -449,11 +454,12 @@ function App() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, padding: 16, paddingBottom: 100 }}>
         {produitsFiltres.map(produit => {
           const qte = panier.filter(p => p.id === produit.id).reduce((acc, p) => acc + p.quantite, 0);
-          const epuise = stocks[produit.id]?.actif && stocks[produit.id]?.stock === 0;
+          const epuise = stocksProduits[produit.id]?.actif && stocksProduits[produit.id]?.stock === 0;
+          const stockPlein = !epuise && stocksProduits[produit.id]?.actif && qte >= stocksProduits[produit.id]?.stock;
           return (
             <div key={produit.id}
               onClick={() => !epuise && produit.type !== 'boisson' ? setPopupProduit(produit) : null}
-              style={{ background: '#FFF', borderRadius: 12, overflow: 'hidden', border: `0.5px solid ${qte > 0 ? BRUN : BORDER}`, cursor: !epuise && produit.type !== 'boisson' ? 'pointer' : 'default', opacity: epuise ? 0.5 : 1 }}>
+              style={{ background: '#FFF', borderRadius: 12, overflow: 'hidden', border: `0.5px solid ${qte > 0 ? BRUN : BORDER}`, cursor: !epuise && produit.type !== 'boisson' ? 'pointer' : 'default', opacity: epuise ? 0.4 : 1 }}>
               <div style={{ width: '100%', height: 100, background: CREME2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, position: 'relative' }}>
                 {produit.emoji}
                 {epuise && (
@@ -480,9 +486,9 @@ function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                   <div style={{ fontSize: 13, color: BRUN, fontFamily: 'sans-serif' }}>{produit.prix.toFixed(2)} TND</div>
                   {produit.type === 'boisson' ? (
-                    <button onClick={(e) => { e.stopPropagation(); if (!epuise) ajouterAuPanier(produit); }}
-                      disabled={epuise}
-                      style={{ width: 26, height: 26, borderRadius: '50%', background: epuise ? '#CCC' : BRUN, color: CREME, border: 'none', fontSize: 18, cursor: epuise ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                    <button onClick={(e) => { e.stopPropagation(); if (!epuise && !stockPlein) ajouterAuPanier(produit); }}
+                      disabled={epuise || stockPlein}
+                      style={{ width: 26, height: 26, borderRadius: '50%', background: epuise || stockPlein ? '#CCC' : BRUN, color: CREME, border: 'none', fontSize: 18, cursor: epuise || stockPlein ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
                       +
                     </button>
                   ) : (

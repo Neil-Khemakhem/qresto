@@ -86,8 +86,9 @@ function Dashboard() {
   }, [commandeSelectee]);
 
   useEffect(() => {
-    getDoc(doc(db, 'stocks', 'produits')).then(snap => { if (snap.exists()) setStocks(snap.data()); });
-    getDoc(doc(db, 'stocks', 'supplements')).then(snap => { if (snap.exists()) setStocksSupplements(snap.data()); });
+    const unsubStocks = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => { if (snap.exists()) setStocks(snap.data()); });
+    const unsubSupplements = onSnapshot(doc(db, 'stocks', 'supplements'), (snap) => { if (snap.exists()) setStocksSupplements(snap.data()); });
+    return () => { unsubStocks(); unsubSupplements(); };
   }, []);
 
   const ouvrirModifier = (commande) => {
