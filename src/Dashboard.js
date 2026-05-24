@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc, setDoc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc, setDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 
 const BRUN = '#7B2B0A';
@@ -60,7 +60,6 @@ function Dashboard() {
   const [mdpErreur, setMdpErreur] = useState(false);
   const [modifie, setModifie] = useState(false);
   const [paiementsTable, setPaiementsTable] = useState({});
-  const [modePaiement, setModePaiement] = useState('especes');
   const [articleActif, setArticleActif] = useState(null); // { table, cmdId, idx, montantMax }
   const [montantArticle, setMontantArticle] = useState('');
   const [additionModifTable, setAdditionModifTable] = useState(null);
