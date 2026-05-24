@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
 import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc, setDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
+import { migrerMenuVersFirestore } from './migrerMenu';
 
 const BRUN = '#7B2B0A';
 const CREME = '#FAF7F2';
@@ -58,6 +59,7 @@ function Dashboard() {
   const [mdpStats, setMdpStats] = useState('');
   const [statsDebloquees, setStatsDebloquees] = useState(false);
   const [mdpErreur, setMdpErreur] = useState(false);
+  const [migrationStatus, setMigrationStatus] = useState('');
   const [modifie, setModifie] = useState(false);
   const [paiementsTable, setPaiementsTable] = useState({});
   const [articleActif, setArticleActif] = useState(null); // { table, cmdId, idx, montantMax }
@@ -65,6 +67,12 @@ function Dashboard() {
   const [additionModifTable, setAdditionModifTable] = useState(null);
   const [moisOuvert, setMoisOuvert] = useState(null);
   const [jourOuvert, setJourOuvert] = useState(null);
+  const [menuProduits, setMenuProduits] = useState([]);
+  const [produitEdite, setProduitEdite] = useState(null);
+  const [nouvelIngredient, setNouvelIngredient] = useState('');
+  const [nouveauSupNom, setNouveauSupNom] = useState('');
+  const [nouveauSupPrix, setNouveauSupPrix] = useState('');
+  const [photoUploading, setPhotoUploading] = useState(false);
 
   useEffect(() => {
     const unsub1 = onSnapshot(collection(db, 'commandes'), (snap) => {
@@ -83,6 +91,13 @@ function Dashboard() {
     });
     return () => { unsub1(); unsub2(); };
   }, [commandeSelectee]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'menu'), (snap) => {
+      setMenuProduits(snap.docs.map(d => ({ ...d.data(), id: d.id })).sort((a, b) => Number(a.id) - Number(b.id)));
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsubStocks = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => { if (snap.exists()) setStocks(snap.data()); });
@@ -382,6 +397,7 @@ function Dashboard() {
             { key: 'historique', label: 'Historique' },
             { key: 'stocks', label: 'Stocks' },
             { key: 'stats', label: 'Stats' },
+            { key: 'menu', label: 'Menu' },
           ].map(v => (
             <button key={v.key} onClick={() => setVue(v.key)}
               style={{ padding: '7px 14px', borderRadius: 6, border: `0.5px solid ${vue === v.key ? '#1a1a1a' : '#DDD'}`, background: vue === v.key ? '#1a1a1a' : CREME, color: vue === v.key ? '#FFF' : '#666', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
@@ -786,6 +802,13 @@ function Dashboard() {
                 <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Statistiques</h2>
                 <button onClick={() => { setStatsDebloquees(false); setMdpStats(''); }} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>Verrouiller</button>
               </div>
+              <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button onClick={async () => { setMigrationStatus('Migration en cours...'); await migrerMenuVersFirestore(); setMigrationStatus('✅ Terminé !'); }}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: `0.5px solid #DDD`, background: '#FFF', color: '#1a1a1a', cursor: 'pointer', fontSize: 13 }}>
+                  Migrer menu vers Firestore
+                </button>
+                {migrationStatus && <span style={{ fontSize: 13, color: '#666' }}>{migrationStatus}</span>}
+              </div>
 
               <div style={{ background: '#FFF', borderRadius: 10, padding: 16, border: `0.5px solid ${BORDER}`, marginBottom: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a1a', marginBottom: 12 }}>Aujourd'hui — {today}</div>
@@ -903,6 +926,165 @@ function Dashboard() {
           )}
         </div>
       )}
+
+      {/* MENU */}
+      {vue === 'menu' && !produitEdite && (
+        <div style={{ padding: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>Gestion du menu</h2>
+            <button onClick={() => setProduitEdite({ id: Date.now().toString(), nom: '', prix: '', emoji: '', categorie: '', type: 'boisson', description: '', provenance: '', composition: '', ingredients: [], supplements: [], actif: true, photoURL: '' })}
+              style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+              + Nouveau produit
+            </button>
+          </div>
+          {Object.entries(menuProduits.reduce((acc, p) => { (acc[p.categorie] = acc[p.categorie] || []).push(p); return acc; }, {})).map(([cat, produits]) => (
+            <div key={cat} style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>{cat}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {produits.map(p => (
+                  <div key={p.id} onClick={() => setProduitEdite({ ...p, prix: String(p.prix), ingredients: p.ingredients || [], supplements: p.supplements || [] })}
+                    style={{ background: '#FFF', borderRadius: 10, padding: '12px 16px', border: `0.5px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+                    {p.photoURL ? <img src={p.photoURL} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover' }} /> : <div style={{ width: 44, height: 44, borderRadius: 8, background: CREME2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>{p.emoji}</div>}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: '#1a1a1a' }}>{p.nom}</div>
+                      <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>{p.prix?.toFixed ? p.prix.toFixed(2) : p.prix} TND — {p.type}</div>
+                    </div>
+                    <div style={{ fontSize: 11, padding: '3px 8px', borderRadius: 20, background: p.actif ? '#DCFCE7' : '#F3F4F6', color: p.actif ? '#166534' : '#999', fontWeight: 600 }}>{p.actif ? 'Actif' : 'Inactif'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {vue === 'menu' && produitEdite && (() => {
+        const champ = (label, key, type = 'text') => (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>{label}</div>
+            <input type={type} value={produitEdite[key]} onChange={e => setProduitEdite(p => ({ ...p, [key]: e.target.value }))}
+              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13, boxSizing: 'border-box' }} />
+          </div>
+        );
+        return (
+          <div style={{ padding: 24, maxWidth: 640 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <button onClick={() => setProduitEdite(null)} style={{ padding: '6px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: CREME, color: '#666', cursor: 'pointer', fontSize: 12 }}>← Retour</button>
+              <h2 style={{ fontSize: 16, fontWeight: 600, color: '#1a1a1a', margin: 0 }}>{produitEdite.nom || 'Nouveau produit'}</h2>
+            </div>
+
+            {champ('Nom', 'nom')}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Prix (TND)</div>
+                <input type="number" step="0.5" value={produitEdite.prix} onChange={e => setProduitEdite(p => ({ ...p, prix: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Emoji</div>
+                <input value={produitEdite.emoji} onChange={e => setProduitEdite(p => ({ ...p, emoji: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 18, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Type</div>
+                <select value={produitEdite.type} onChange={e => setProduitEdite(p => ({ ...p, type: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13, boxSizing: 'border-box', background: '#FFF' }}>
+                  <option value="boisson">boisson</option>
+                  <option value="popup">popup</option>
+                  <option value="sale">sale</option>
+                </select>
+              </div>
+            </div>
+            {champ('Catégorie', 'categorie')}
+            {champ('Description', 'description')}
+            {champ('Provenance', 'provenance')}
+            {champ('Composition', 'composition')}
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Ingrédients</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                {produitEdite.ingredients.map((ing, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: CREME2, borderRadius: 20, padding: '4px 10px', fontSize: 12 }}>
+                    {ing}
+                    <span onClick={() => setProduitEdite(p => ({ ...p, ingredients: p.ingredients.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontWeight: 700, marginLeft: 2 }}>×</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={nouvelIngredient} onChange={e => setNouvelIngredient(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && nouvelIngredient.trim()) { setProduitEdite(p => ({ ...p, ingredients: [...p.ingredients, nouvelIngredient.trim()] })); setNouvelIngredient(''); } }}
+                  placeholder="Ajouter un ingrédient…" style={{ flex: 1, padding: '7px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13 }} />
+                <button onClick={() => { if (nouvelIngredient.trim()) { setProduitEdite(p => ({ ...p, ingredients: [...p.ingredients, nouvelIngredient.trim()] })); setNouvelIngredient(''); } }}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 13 }}>+</button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Suppléments</div>
+              {produitEdite.supplements.map((s, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ flex: 1, fontSize: 13 }}>{s.nom}</span>
+                  <span style={{ fontSize: 13, color: BRUN, fontWeight: 500 }}>+{Number(s.prix).toFixed(2)} TND</span>
+                  <span onClick={() => setProduitEdite(p => ({ ...p, supplements: p.supplements.filter((_, j) => j !== i) }))} style={{ cursor: 'pointer', color: '#999', fontSize: 16, fontWeight: 700 }}>×</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <input value={nouveauSupNom} onChange={e => setNouveauSupNom(e.target.value)} placeholder="Nom du supplément" style={{ flex: 2, padding: '7px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13 }} />
+                <input type="number" step="0.5" value={nouveauSupPrix} onChange={e => setNouveauSupPrix(e.target.value)} placeholder="Prix" style={{ flex: 1, padding: '7px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13 }} />
+                <button onClick={() => { if (nouveauSupNom.trim() && nouveauSupPrix !== '') { setProduitEdite(p => ({ ...p, supplements: [...p.supplements, { nom: nouveauSupNom.trim(), prix: Number(nouveauSupPrix) }] })); setNouveauSupNom(''); setNouveauSupPrix(''); } }}
+                  style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 13 }}>+</button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>Photo</div>
+              {produitEdite.photoURL && <img src={produitEdite.photoURL} alt="" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, marginBottom: 8, display: 'block' }} />}
+              <input type="file" accept="image/*" onChange={async e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setPhotoUploading(true);
+                const formData = new FormData();
+                formData.append('key', '827a405be502f40ef803234542b1e00d');
+                formData.append('image', file);
+                const res = await fetch('https://api.imgbb.com/1/upload', { method: 'POST', body: formData });
+                const json = await res.json();
+                setProduitEdite(p => ({ ...p, photoURL: json.data.url }));
+                setPhotoUploading(false);
+              }} style={{ fontSize: 13 }} />
+              {photoUploading && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Upload en cours…</div>}
+            </div>
+
+            <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ fontSize: 12, color: '#666' }}>Actif</div>
+              <div onClick={() => setProduitEdite(p => ({ ...p, actif: !p.actif }))}
+                style={{ width: 40, height: 22, borderRadius: 11, background: produitEdite.actif ? '#166534' : '#DDD', cursor: 'pointer', position: 'relative', transition: 'background 0.2s' }}>
+                <div style={{ position: 'absolute', top: 3, left: produitEdite.actif ? 20 : 3, width: 16, height: 16, borderRadius: '50%', background: '#FFF', transition: 'left 0.2s' }} />
+              </div>
+              <span style={{ fontSize: 12, color: produitEdite.actif ? '#166534' : '#999' }}>{produitEdite.actif ? 'Visible dans le menu' : 'Masqué'}</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={async () => {
+                const { id, ...data } = produitEdite;
+                await setDoc(doc(db, 'menu', id), { ...data, prix: Number(data.prix) });
+                setProduitEdite(null);
+              }} style={{ flex: 1, padding: '12px', borderRadius: 8, border: 'none', background: '#1a1a1a', color: '#FFF', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
+                Enregistrer
+              </button>
+              {menuProduits.find(p => p.id === produitEdite.id) && (
+                <button onClick={async () => {
+                  if (window.confirm(`Supprimer "${produitEdite.nom}" ?`)) {
+                    await deleteDoc(doc(db, 'menu', produitEdite.id));
+                    setProduitEdite(null);
+                  }
+                }} style={{ padding: '12px 18px', borderRadius: 8, border: 'none', background: '#EF4444', color: '#FFF', cursor: 'pointer', fontSize: 14 }}>
+                  Supprimer
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* POPUP MODIFIER COMMANDE */}
       {commandeSelectee && (

@@ -11,27 +11,6 @@ const BORDER = '#E8DDD0';
 const BRUN_LIGHT = '#D4C4B0';
 const VERT = '#166534';
 
-const menu = [
-  { id: 1, categorie: "Boissons", nom: "Café", prix: 3.5, emoji: "☕", description: "100% Arabica, torréfié en Tunisie", type: "boisson" },
-  { id: 2, categorie: "Boissons", nom: "Matcha Latte", prix: 6.0, emoji: "🍵", description: "Matcha japonais de grade cérémoniel, lait d'avoine", type: "boisson" },
-  { id: 3, categorie: "Boissons", nom: "Jus d'orange", prix: 5.0, emoji: "🍊", description: "Pressé à froid, oranges locales de saison", type: "boisson" },
-  { id: 4, categorie: "Sans+", nom: "Mousse au chocolat", prix: 7.0, emoji: "🍫", type: "popup", provenance: "Fabriquée dans le laboratoire de La Patisserie d'Inès", composition: "Cacao pur, aquafaba, érythritol — sans sucre ajouté, sans matière grasse" },
-  { id: 5, categorie: "Sans+", nom: "Barre protéinée", prix: 5.5, emoji: "💪", type: "popup", provenance: "Marque Sans+ — fabriquée en interne", composition: "Protéines de whey, flocons d'avoine, beurre de cacahuète — sans sucre ajouté" },
-  { id: 6, categorie: "Pâtisseries", nom: "Éclair chocolat", prix: 4.5, emoji: "🍮", type: "popup", provenance: "Pâtisserie française artisanale — La Patisserie d'Inès", composition: "Pâte à choux, crème pâtissière au chocolat noir, glaçage cacao" },
-  { id: 7, categorie: "Pâtisseries", nom: "Tarte citron", prix: 5.0, emoji: "🍋", type: "popup", provenance: "Pâtisserie française artisanale — La Patisserie d'Inès", composition: "Pâte sablée, crème citron meringuée, citrons frais de Tunisie" },
-  {
-    id: 8, categorie: "Salé", nom: "Avocado toast", prix: 9.0, emoji: "🥑", type: "sale",
-    composition: "Pain au levain, avocat, œuf poché, graines de sésame, piment d'Espelette",
-    ingredients: ["Pain au levain", "Avocat", "Œuf poché", "Graines de sésame", "Piment d'Espelette", "Citron"],
-    supplements: [{ nom: "Saumon fumé", prix: 3.0 }, { nom: "Burrata", prix: 4.0 }, { nom: "Avocat supplémentaire", prix: 2.5 }, { nom: "Œuf supplémentaire", prix: 1.5 }],
-  },
-  {
-    id: 9, categorie: "Salé", nom: "Sandwich thon", prix: 7.5, emoji: "🥪", type: "sale",
-    composition: "Pain ciabatta, thon, tomates, olives, harissa maison, salade",
-    ingredients: ["Pain ciabatta", "Thon", "Tomates", "Olives", "Harissa", "Salade", "Œuf dur"],
-    supplements: [{ nom: "Fromage", prix: 1.5 }, { nom: "Double thon", prix: 2.0 }, { nom: "Frites", prix: 3.0 }],
-  },
-];
 
 const CartIcon = ({ count }) => (
   <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -177,6 +156,14 @@ function App() {
   const [envoiOk, setEnvoiOk] = useState(false);
   const [popupProduit, setPopupProduit] = useState(null);
   const [stocksProduits, setStocksProduits] = useState({});
+  const [menu, setMenu] = useState([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'menu'), (snap) => {
+      setMenu(snap.docs.map(d => ({ ...d.data(), id: d.id })).sort((a, b) => Number(a.id) - Number(b.id)));
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => {
@@ -451,7 +438,7 @@ function App() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, padding: 16, paddingBottom: 100 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, padding: 16, paddingBottom: 100 }}>
         {produitsFiltres.map(produit => {
           const qte = panier.filter(p => p.id === produit.id).reduce((acc, p) => acc + p.quantite, 0);
           const epuise = stocksProduits[produit.id]?.actif && stocksProduits[produit.id]?.stock === 0;
@@ -460,8 +447,10 @@ function App() {
             <div key={produit.id}
               onClick={() => !epuise && produit.type !== 'boisson' ? setPopupProduit(produit) : null}
               style={{ background: '#FFF', borderRadius: 12, overflow: 'hidden', border: `0.5px solid ${qte > 0 ? BRUN : BORDER}`, cursor: !epuise && produit.type !== 'boisson' ? 'pointer' : 'default', opacity: epuise ? 0.4 : 1 }}>
-              <div style={{ width: '100%', height: 100, background: CREME2, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, position: 'relative' }}>
-                {produit.emoji}
+              <div style={{ width: '100%', paddingTop: '66%', background: CREME2, position: 'relative' }}>
+                {produit.photoURL
+                  ? <img src={produit.photoURL} alt={produit.nom} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40 }}>{produit.emoji}</div>}
                 {epuise && (
                   <div style={{ position: 'absolute', top: 8, left: 8, background: '#EF4444', color: '#FFF', borderRadius: 6, fontSize: 10, fontFamily: 'sans-serif', fontWeight: 700, padding: '2px 7px' }}>
                     Épuisé
