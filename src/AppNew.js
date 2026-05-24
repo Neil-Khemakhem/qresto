@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, query, where, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 
-const BG = '#FAFAF9';
+const BG = '#FAF5F0';
 const TEXT = '#1A1A1A';
 const TEXT2 = '#999999';
 const BORDER = '#EDEDEA';
-const BTN = '#1A1A1A';
+const BTN = '#7A9BAF';
 const EPUISE = '#E24B4A';
 const TABLE = 1;
 
@@ -31,17 +31,17 @@ function PopupProduit({ produit, onClose, onAjouter }) {
 
   return (
     <div
-      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 200 }}
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}
       onClick={onClose}>
       <div
-        style={{ background: '#fff', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}
+        style={{ background: '#fff', borderRadius: 20, width: 'calc(100% - 32px)', maxWidth: 480, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
         onClick={e => e.stopPropagation()}>
 
         {/* Photo plein largeur */}
-        <div style={{ width: '100%', height: 130, background: '#F0EDE8', position: 'relative', flexShrink: 0 }}>
+        <div style={{ width: '100%', height: 160, background: '#F2E8E0', position: 'relative', flexShrink: 0, borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
           {produit.photoURL
-            ? <img src={produit.photoURL} alt={produit.nom} style={{ width: '100%', height: 130, objectFit: 'cover', display: 'block' }} />
-            : <div style={{ height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 52 }}>{produit.emoji}</div>}
+            ? <img src={produit.photoURL} alt={produit.nom} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block' }} />
+            : <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 52 }}>{produit.emoji}</div>}
           <button onClick={onClose}
             style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.28)', border: 'none', borderRadius: '50%', width: 32, height: 32, color: '#fff', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             ✕
@@ -105,7 +105,7 @@ function PopupProduit({ produit, onClose, onAjouter }) {
                   const choisi = supplementsChoisis.find(s => s.nom === sup.nom);
                   return (
                     <button key={i} onClick={() => toggleSupplement(sup)}
-                      style={{ padding: '12px 16px', borderRadius: 12, fontSize: 13, border: `0.5px solid ${choisi ? BTN : BORDER}`, background: choisi ? BTN : '#fff', color: choisi ? '#fff' : TEXT, cursor: 'pointer', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      style={{ padding: '12px 16px', borderRadius: 12, fontSize: 13, border: `0.5px solid ${choisi ? BTN : '#DDD'}`, background: choisi ? BTN : 'transparent', color: choisi ? '#fff' : TEXT, cursor: 'pointer', textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>+ {sup.nom}</span>
                       <span style={{ fontWeight: 500 }}>{choisi ? '✓ ' : ''}{sup.prix.toFixed(2)} TND</span>
                     </button>
@@ -229,13 +229,20 @@ function AppNew() {
     if (s === 'en_preparation') return { background: '#EFF6FF', color: '#1D4ED8' };
     return { background: '#F0FFF4', color: '#276749' };
   };
-  const statutLabel = (s) => s === 'en_attente' ? 'En attente' : s === 'en_preparation' ? 'En préparation' : 'Prêt à servir';
+  const statutLabel = (s) => {
+    if (s === 'en_attente') return 'En attente';
+    if (s === 'en_preparation') return 'En préparation';
+    if (s === 'pret') return 'Servi';
+    return 'Terminé';
+  };
 
   const Header = () => (
-    <div style={{ background: '#fff', borderBottom: `0.5px solid ${BORDER}`, padding: '12px 16px', textAlign: 'center', position: 'relative' }}>
-      <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: TEXT, lineHeight: 1.2 }}>QResto</div>
-      <div style={{ fontSize: 10, color: '#BBB', fontStyle: 'italic', marginTop: 2 }}>d'inès × SANS+</div>
-      <div style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', border: '0.5px solid #DDD', color: '#888', borderRadius: 20, fontSize: 10, padding: '3px 10px' }}>
+    <div style={{ background: '#fff', borderBottom: `0.5px solid ${BORDER}`, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase', color: TEXT, lineHeight: 1.2 }}>QResto</div>
+        <div style={{ fontSize: 10, color: '#BBB', fontStyle: 'italic', marginTop: 2 }}>La Pâtisserie d'Inès × Sans+</div>
+      </div>
+      <div style={{ border: '0.5px solid #DDD', color: '#888', borderRadius: 20, fontSize: 10, padding: '3px 10px', flexShrink: 0 }}>
         Table {TABLE}
       </div>
     </div>
@@ -310,7 +317,7 @@ function AppNew() {
                 {panier.map(item => (
                   <div key={item.cle} style={{ background: '#fff', borderRadius: 12, padding: '10px 12px', border: `0.5px solid ${BORDER}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 52, height: 52, borderRadius: 8, background: '#F0EDE8', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
+                      <div style={{ width: 52, height: 52, borderRadius: 10, background: '#F2E8E0', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
                         {item.photoURL
                           ? <img src={item.photoURL} alt="" style={{ width: 52, height: 52, objectFit: 'cover' }} />
                           : item.emoji}
@@ -421,14 +428,16 @@ function AppNew() {
       )}
 
       {/* Catégories */}
-      <div style={{ display: 'flex', gap: 8, padding: '10px 16px', overflowX: 'auto', background: '#fff', borderBottom: `0.5px solid ${BORDER}`, scrollbarWidth: 'none' }}>
+      <div style={{ display: 'flex', overflowX: 'auto', background: '#fff', borderBottom: `0.5px solid ${BORDER}`, scrollbarWidth: 'none', padding: '0 8px' }}>
         {categories.map(cat => (
           <button key={cat} onClick={() => setCategorieActive(cat)}
             style={{
-              padding: '6px 14px', borderRadius: 20, whiteSpace: 'nowrap', fontSize: 12, cursor: 'pointer',
-              border: categorieActive === cat ? 'none' : '0.5px solid #DDD',
-              background: categorieActive === cat ? BTN : 'transparent',
-              color: categorieActive === cat ? '#fff' : '#888',
+              padding: '10px 12px', whiteSpace: 'nowrap', fontSize: 13, cursor: 'pointer',
+              border: 'none',
+              borderBottom: categorieActive === cat ? `2px solid ${BTN}` : '2px solid transparent',
+              background: 'transparent',
+              color: categorieActive === cat ? '#1A1A1A' : '#999',
+              fontWeight: categorieActive === cat ? 500 : 400,
             }}>
             {cat}
           </button>
@@ -456,9 +465,9 @@ function AppNew() {
               {/* Photo / Emoji */}
               <div
                 onClick={handleTap}
-                style={{ width: 52, height: 52, borderRadius: 8, background: '#F0EDE8', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, cursor: epuise ? 'default' : 'pointer' }}>
+                style={{ width: 72, height: 72, borderRadius: 10, background: '#F2E8E0', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, cursor: epuise ? 'default' : 'pointer' }}>
                 {produit.photoURL
-                  ? <img src={produit.photoURL} alt={produit.nom} style={{ width: 52, height: 52, objectFit: 'cover' }} />
+                  ? <img src={produit.photoURL} alt={produit.nom} style={{ width: 72, height: 72, objectFit: 'cover' }} />
                   : produit.emoji}
               </div>
 
