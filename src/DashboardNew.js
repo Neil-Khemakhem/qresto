@@ -428,10 +428,23 @@ function DashboardNew() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <style>{`* { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; } button { transition: all 0.15s ease; }`}</style>
+      <style>{`
+        * { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; }
+        button { transition: all 0.15s ease; }
+        .qr-bottom-nav { display: none !important; }
+        @media (min-width: 1025px) {
+          .qr-sidebar { display: flex !important; }
+          .qr-main-content { margin-left: 200px !important; }
+        }
+        @media (max-width: 1024px) {
+          .qr-sidebar { display: none !important; }
+          .qr-main-content { margin-left: 0 !important; padding-bottom: 56px; }
+          .qr-bottom-nav { display: flex !important; }
+        }
+      `}</style>
 
       {/* SIDEBAR */}
-      <div style={{ width: 200, minWidth: 200, background: '#0B1220', height: '100vh', position: 'fixed', top: 0, left: 0, display: 'flex', flexDirection: 'column', zIndex: 10 }}>
+      <div className="qr-sidebar" style={{ width: 200, minWidth: 200, background: '#0B1220', height: '100vh', position: 'fixed', top: 0, left: 0, display: 'flex', flexDirection: 'column', zIndex: 10 }}>
 
         {/* Logo */}
         <div style={{ padding: '20px 18px 16px' }}>
@@ -488,7 +501,7 @@ function DashboardNew() {
       </div>
 
       {/* MAIN CONTENT */}
-      <div style={{ flex: 1, marginLeft: 200, background: '#F4F6FB', minHeight: '100vh' }}>
+      <div className="qr-main-content" style={{ flex: 1, marginLeft: 200, background: '#F4F6FB', minHeight: '100vh' }}>
 
       {/* TOPBAR */}
       <div style={{ height: 48, background: '#fff', borderBottom: '0.5px solid #E2E8F0', display: 'flex', alignItems: 'center', padding: '0 24px', gap: 16, position: 'sticky', top: 0, zIndex: 5 }}>
@@ -1230,6 +1243,33 @@ function DashboardNew() {
       )}
 
       </div>{/* fin MAIN CONTENT */}
+      {/* BOTTOM NAV — visible uniquement sur mobile/tablette via CSS */}
+      <div className="qr-bottom-nav" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 56, background: '#0B1220', zIndex: 20, borderTop: '0.5px solid rgba(255,255,255,0.08)', alignItems: 'stretch' }}>
+        {[
+          { key: 'commandes', label: 'Commandes', icon: 'ti-receipt' },
+          { key: 'additions', label: 'Additions', icon: 'ti-cash' },
+          { key: 'stocks', label: 'Stocks', icon: 'ti-package' },
+          { key: 'menu', label: 'Menu', icon: 'ti-tool' },
+          { key: 'stats', label: 'Stats', icon: 'ti-chart-bar' },
+        ].map(item => {
+          const actif = vue === item.key;
+          return (
+            <button key={item.key} onClick={() => setVue(item.key)}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, border: 'none', background: 'none', cursor: 'pointer', color: actif ? '#63B3ED' : 'rgba(255,255,255,0.45)' }}>
+              <div style={{ position: 'relative' }}>
+                <i className={`ti ${item.icon}`} style={{ fontSize: 19 }} />
+                {item.key === 'commandes' && nbAttente > 0 && (
+                  <span style={{ position: 'absolute', top: -4, right: -6, background: '#E24B4A', color: '#fff', borderRadius: '50%', width: 14, height: 14, fontSize: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 500 }}>
+                    {nbAttente > 9 ? '9+' : nbAttente}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 9, fontWeight: actif ? 500 : 400 }}>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
     </div>
   );
 }
