@@ -451,6 +451,10 @@ function DashboardNew() {
           .qr-accordion-arrow { display: inline !important; }
           .qr-accordion-content { max-height: 0; overflow: hidden; }
           .qr-accordion-content.open { max-height: 3000px; }
+          .qr-additions-outer { padding: 12px !important; max-width: none !important; }
+          .qr-additions-grid { grid-template-columns: 1fr !important; }
+          .qr-payer-btns { flex-direction: row !important; }
+          .qr-payer-btns button { flex: 1; font-size: 12px !important; padding: 10px !important; white-space: nowrap !important; text-align: center !important; }
         }
         @media (min-width: 768px) {
           .qr-accordion-content { max-height: none !important; overflow: visible; }
@@ -617,11 +621,11 @@ function DashboardNew() {
 
       {/* ADDITIONS */}
       {vue === 'additions' && (
-        <div style={{ padding: 24, maxWidth: 1200 }}>
+        <div className="qr-additions-outer" style={{ padding: 24, maxWidth: 1200 }}>
           <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Additions par table</h2>
           <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Cliquez sur un article pour le payer — partiellement ou en entier.</p>
           {tables.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune table active</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+          <div className="qr-additions-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
             {tables.map(table => {
               const cmds = commandesParTable(table);
               const total = totalTable(table);
@@ -652,7 +656,7 @@ function DashboardNew() {
                   </div>
                   <div className={`qr-accordion-content${tableAccordionOuvert === table ? ' open' : ''}`}>
                   {!toutRegle && !enModif && (
-                    <div style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
+                    <div className="qr-payer-btns" style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
                       <button onClick={() => payerTout(table, 'especes')}
                         style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
                         Tout payer — Espèces ({reste.toFixed(2)} TND)
