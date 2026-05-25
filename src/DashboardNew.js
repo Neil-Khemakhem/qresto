@@ -81,6 +81,7 @@ function DashboardNew() {
   const [hoveredTab, setHoveredTab] = useState(null);
   const [hoveredEl, setHoveredEl] = useState(null);
   const [hoveredArticle, setHoveredArticle] = useState(null);
+  const [tableAccordionOuvert, setTableAccordionOuvert] = useState(null);
 
   useEffect(() => {
     const unsub1 = onSnapshot(collection(db, 'commandes'), (snap) => {
@@ -432,6 +433,9 @@ function DashboardNew() {
         * { font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; }
         button { transition: all 0.15s ease; }
         .qr-bottom-nav { display: none !important; }
+        .qr-accordion-content { transition: max-height 0.2s ease; }
+        .qr-mobile-only { display: none !important; }
+        .qr-accordion-arrow { display: none !important; }
         @media (min-width: 1025px) {
           .qr-sidebar { display: flex !important; }
           .qr-main-content { margin-left: 200px !important; }
@@ -440,6 +444,16 @@ function DashboardNew() {
           .qr-sidebar { display: none !important; }
           .qr-main-content { margin-left: 0 !important; padding-bottom: 56px; }
           .qr-bottom-nav { display: flex !important; }
+        }
+        @media (max-width: 767px) {
+          .qr-desktop-only { display: none !important; }
+          .qr-mobile-only { display: inline !important; }
+          .qr-accordion-arrow { display: inline !important; }
+          .qr-accordion-content { max-height: 0; overflow: hidden; }
+          .qr-accordion-content.open { max-height: 3000px; }
+        }
+        @media (min-width: 768px) {
+          .qr-accordion-content { max-height: none !important; overflow: visible; }
         }
       `}</style>
 
@@ -619,16 +633,24 @@ function DashboardNew() {
 
               return (
                 <div key={table} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: '0.5px solid #E2E8F0' }}>
-                  <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div onClick={() => setTableAccordionOuvert(prev => prev === table ? null : table)}
+                    style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                     <span style={{ fontSize: 14, fontWeight: 500, color: '#1A202C' }}>Table {table}</span>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, color: toutRegle ? '#2D6A2D' : '#718096', fontWeight: 500 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
-                      <button onClick={() => setAdditionModifTable(enModif ? null : table)}
+                      <span className="qr-desktop-only" style={{ fontSize: 12, color: toutRegle ? '#2D6A2D' : '#718096', fontWeight: 500 }}>{toutRegle ? '✓ Tout réglé' : 'En cours'}</span>
+                      <button className="qr-desktop-only" onClick={(e) => { e.stopPropagation(); setAdditionModifTable(enModif ? null : table); }}
                         style={{ padding: '4px 10px', borderRadius: 6, border: enModif ? 'none' : '0.5px solid #CBD5E0', background: enModif ? '#1A202C' : 'transparent', color: enModif ? '#fff' : '#718096', cursor: 'pointer', fontSize: 11 }}>
                         {enModif ? 'Terminer' : 'Modifier'}
                       </button>
+                      <span className="qr-mobile-only" style={{ fontSize: 13, fontWeight: 500, color: toutRegle ? '#2D6A2D' : '#EF4444' }}>
+                        {toutRegle ? '✓ Réglé' : `${reste.toFixed(2)} TND`}
+                      </span>
+                      <span className="qr-accordion-arrow" style={{ fontSize: 11, color: '#999' }}>
+                        {tableAccordionOuvert === table ? '▲' : '▼'}
+                      </span>
                     </div>
                   </div>
+                  <div className={`qr-accordion-content${tableAccordionOuvert === table ? ' open' : ''}`}>
                   {!toutRegle && !enModif && (
                     <div style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
                       <button onClick={() => payerTout(table, 'especes')}
@@ -759,6 +781,7 @@ function DashboardNew() {
                       {toutRegle ? 'Clôturer la table ✓' : "Régler d'abord le solde"}
                     </button>
                   </div>
+                  </div>{/* /qr-accordion-content */}
                 </div>
               );
             })}
