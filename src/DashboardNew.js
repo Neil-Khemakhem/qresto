@@ -436,6 +436,7 @@ function DashboardNew() {
         .qr-accordion-content { transition: max-height 0.2s ease; }
         .qr-mobile-only { display: none !important; }
         .qr-accordion-arrow { display: none !important; }
+        .qr-payer-short { display: none; }
         @media (min-width: 1025px) {
           .qr-sidebar { display: flex !important; }
           .qr-main-content { margin-left: 200px !important; }
@@ -454,7 +455,9 @@ function DashboardNew() {
           .qr-additions-outer { padding: 12px !important; max-width: none !important; }
           .qr-additions-grid { grid-template-columns: 1fr !important; }
           .qr-payer-btns { flex-direction: row !important; }
-          .qr-payer-btns button { flex: 1; font-size: 12px !important; padding: 10px !important; white-space: nowrap !important; text-align: center !important; }
+          .qr-payer-btns button { flex: 1; min-width: 0; font-size: 11px !important; padding: 8px 6px !important; white-space: nowrap !important; text-align: center !important; }
+          .qr-payer-full { display: none !important; }
+          .qr-payer-short { display: inline !important; }
         }
         @media (min-width: 768px) {
           .qr-accordion-content { max-height: none !important; overflow: visible; }
@@ -659,11 +662,13 @@ function DashboardNew() {
                     <div className="qr-payer-btns" style={{ padding: '8px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#F9F9F9', display: 'flex', gap: 8 }}>
                       <button onClick={() => payerTout(table, 'especes')}
                         style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                        Tout payer — Espèces ({reste.toFixed(2)} TND)
+                        <span className="qr-payer-full">Tout payer — Espèces ({reste.toFixed(2)} TND)</span>
+                        <span className="qr-payer-short">Espèces</span>
                       </button>
                       <button onClick={() => payerTout(table, 'carte')}
                         style={{ flex: 1, padding: '8px', borderRadius: 8, border: '0.5px solid #CBD5E0', background: 'transparent', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
-                        Tout payer — Carte
+                        <span className="qr-payer-full">Tout payer — Carte</span>
+                        <span className="qr-payer-short">Carte</span>
                       </button>
                     </div>
                   )}
