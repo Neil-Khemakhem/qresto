@@ -62,8 +62,7 @@ function DashboardNew() {
   const [migrationStatus, setMigrationStatus] = useState('');
   const [modifie, setModifie] = useState(false);
   const [paiementsTable, setPaiementsTable] = useState({});
-  const [articleActif, setArticleActif] = useState(null);
-  const [montantArticle, setMontantArticle] = useState('');
+  const [articlesSelectionnes, setArticlesSelectionnes] = useState({});
   const [additionModifTable, setAdditionModifTable] = useState(null);
   const [moisOuvert, setMoisOuvert] = useState(null);
   const [jourOuvert, setJourOuvert] = useState(null);
@@ -80,7 +79,6 @@ function DashboardNew() {
   const [hoveredNav, setHoveredNav] = useState(null);
   const [hoveredTab, setHoveredTab] = useState(null);
   const [hoveredEl, setHoveredEl] = useState(null);
-  const [hoveredArticle, setHoveredArticle] = useState(null);
   const [tableAccordionOuvert, setTableAccordionOuvert] = useState(null);
 
   useEffect(() => {
@@ -187,22 +185,33 @@ function DashboardNew() {
     await updateDoc(doc(db, 'commandes', cmdId), { produits, total });
   };
 
-  const payerArticle = (table, cmdId, idx, montant, mode) => {
-    const montantReel = parseFloat(montant);
-    if (!montantReel || montantReel <= 0) return;
-    const key = `${cmdId}-${idx}`;
-    setPaiementsTable(prev => ({
-      ...prev,
-      [table]: [...(prev[table] || []), {
-        montant: montantReel,
-        mode,
-        heure: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-        articleKey: key,
-        label: commandes.find(c => c.id === cmdId)?.produits?.[idx]?.nom || ''
-      }]
-    }));
-    setArticleActif(null);
-    setMontantArticle('');
+  const payerSelection = (table, mode) => {
+    const sel = articlesSelectionnes[table] || {};
+    const cmdsTable = commandes.filter(c => c.table === table);
+    const heure = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const nouveauxPaiements = [];
+    cmdsTable.forEach(cmd => {
+      (cmd.produits || []).forEach((p, idx) => {
+        const key = `${cmd.id}-${idx}`;
+        if (sel[key]) {
+          const deja = montantDejaPayeArticle(table, cmd.id, idx);
+          const reste = Math.max(0, p.prix * p.quantite - deja);
+          if (reste > 0) nouveauxPaiements.push({ montant: reste, mode, heure, articleKey: key, label: p.nom });
+        }
+      });
+    });
+    setPaiementsTable(prev => ({ ...prev, [table]: [...(prev[table] || []), ...nouveauxPaiements] }));
+    setArticlesSelectionnes(prev => ({ ...prev, [table]: {} }));
+  };
+
+  const selectionMontant = (table) => {
+    const sel = articlesSelectionnes[table] || {};
+    return commandes.filter(c => c.table === table).reduce((acc, cmd) => {
+      (cmd.produits || []).forEach((p, idx) => {
+        if (sel[`${cmd.id}-${idx}`]) acc += Math.max(0, p.prix * p.quantite - montantDejaPayeArticle(table, cmd.id, idx));
+      });
+      return acc;
+    }, 0);
   };
 
   const payerTout = (table, mode) => {
@@ -256,7 +265,7 @@ function DashboardNew() {
     }
     setPaiementsTable(p => { const n = { ...p }; delete n[table]; return n; });
     setAdditionModifTable(null);
-    setArticleActif(null);
+    setArticlesSelectionnes(p => { const n = { ...p }; delete n[table]; return n; });
   };
 
   const tables = [...new Set(commandes.map(c => c.table))].sort((a, b) => a - b);
@@ -626,7 +635,7 @@ function DashboardNew() {
       {vue === 'additions' && (
         <div className="qr-additions-outer" style={{ padding: 24, maxWidth: 1200 }}>
           <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Additions par table</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Cliquez sur un article pour le payer — partiellement ou en entier.</p>
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 20 }}>Sélectionnez les articles à encaisser, puis choisissez le mode de paiement.</p>
           {tables.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Aucune table active</div>}
           <div className="qr-additions-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
             {tables.map(table => {
@@ -637,6 +646,9 @@ function DashboardNew() {
               const reste = resteAPayer(table);
               const toutRegle = reste === 0 && paiements.length > 0;
               const enModif = additionModifTable === table;
+              const sel = articlesSelectionnes[table] || {};
+              const nbSel = Object.values(sel).filter(Boolean).length;
+              const montantSel = selectionMontant(table);
 
               return (
                 <div key={table} style={{ background: '#FFF', borderRadius: 10, overflow: 'hidden', border: '0.5px solid #E2E8F0' }}>
@@ -673,7 +685,6 @@ function DashboardNew() {
                     </div>
                   )}
                   <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0` }}>
-                    {!enModif && <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Cliquez un article pour payer</div>}
                     {enModif && <div style={{ fontSize: 11, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Mode modification</div>}
                     {cmds.map((cmd, i) => (
                       <div key={cmd.id} style={{ marginBottom: i < cmds.length - 1 ? 8 : 0 }}>
@@ -682,23 +693,26 @@ function DashboardNew() {
                           const dejaPayePourCetArticle = montantDejaPayeArticle(table, cmd.id, j);
                           const prixArticle = p.prix * p.quantite;
                           const resteArticle = Math.max(0, prixArticle - dejaPayePourCetArticle);
-                          const estActif = articleActif?.cmdId === cmd.id && articleActif?.idx === j;
                           const estPayeTotal = dejaPayePourCetArticle >= prixArticle;
                           const articleKey = `${cmd.id}-${j}`;
-                          const isHov = hoveredArticle === articleKey && !estPayeTotal && !enModif;
+                          const estSelectionne = !!sel[articleKey];
                           return (
                             <div key={j} style={{ marginBottom: 4 }}>
                               <div
-                                onClick={() => { if (enModif) return; if (estActif) { setArticleActif(null); setMontantArticle(''); return; } setArticleActif({ table, cmdId: cmd.id, idx: j, montantMax: resteArticle }); setMontantArticle(resteArticle.toFixed(2)); }}
-                                onMouseEnter={() => { if (!estPayeTotal && !enModif) setHoveredArticle(articleKey); }}
-                                onMouseLeave={() => setHoveredArticle(null)}
+                                onClick={() => {
+                                  if (estPayeTotal || enModif) return;
+                                  setArticlesSelectionnes(prev => ({
+                                    ...prev,
+                                    [table]: { ...(prev[table] || {}), [articleKey]: !prev[table]?.[articleKey] }
+                                  }));
+                                }}
                                 style={{
                                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                                   fontSize: 13, padding: '7px 10px', borderRadius: 6,
-                                  cursor: enModif ? 'default' : estPayeTotal ? 'default' : 'pointer',
-                                  background: estPayeTotal ? '#F0F5F0' : estActif ? '#F7F8FA' : isHov ? 'rgba(49,130,206,0.06)' : '#F9F9F9',
-                                  border: `0.5px solid ${estPayeTotal ? '#C0D9C0' : estActif ? '#C0C8D8' : '#E5E5E5'}`,
-                                  borderLeft: isHov ? '2px solid #3182CE' : undefined,
+                                  cursor: estPayeTotal || enModif ? 'default' : 'pointer',
+                                  background: estPayeTotal ? '#F0F5F0' : estSelectionne ? 'rgba(99,179,237,0.10)' : '#F9F9F9',
+                                  border: `0.5px solid ${estPayeTotal ? '#C0D9C0' : estSelectionne ? '#3182CE' : '#E5E5E5'}`,
+                                  borderLeft: estSelectionne ? '2px solid #3182CE' : undefined,
                                   transition: 'all 0.15s ease',
                                 }}>
                                 <span style={{ flex: 1, color: estPayeTotal ? '#2D6A2D' : '#333' }}>
@@ -706,9 +720,6 @@ function DashboardNew() {
                                   {p.supplementsChoisis?.length > 0 && <span style={{ fontSize: 10, color: '#166534', marginLeft: 4 }}>+{Array.isArray(p.supplementsChoisis) ? p.supplementsChoisis.join(', ') : p.supplementsChoisis}</span>}
                                 </span>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  {dejaPayePourCetArticle > 0 && !estPayeTotal && (
-                                    <span style={{ fontSize: 10, color: '#166534', background: '#DCFCE7', padding: '1px 6px', borderRadius: 10 }}>−{dejaPayePourCetArticle.toFixed(2)}</span>
-                                  )}
                                   <span style={{ color: estPayeTotal ? '#2D6A2D' : '#333', fontWeight: estPayeTotal ? 500 : 400 }}>
                                     {estPayeTotal ? '✓ Payé' : `${resteArticle.toFixed(2)} TND`}
                                   </span>
@@ -718,27 +729,21 @@ function DashboardNew() {
                                   )}
                                 </div>
                               </div>
-                              {estActif && !enModif && (
-                                <div style={{ background: '#F7F8FA', borderRadius: '0 0 8px 8px', padding: '10px 12px', border: '0.5px solid #E2E8F0', borderTop: 'none', marginTop: -2 }}>
-                                  <div style={{ fontSize: 11, color: '#718096', marginBottom: 8, fontWeight: 500 }}>Montant à encaisser pour "{p.nom}"</div>
-                                  <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                                    <input value={montantArticle} onChange={e => setMontantArticle(e.target.value)} style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: '0.5px solid #CBD5E0', fontSize: 13, outline: 'none', MozAppearance: 'textfield' }} placeholder="Montant" />
-                                    <button onClick={() => setMontantArticle((resteArticle / 2).toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: '#FFF', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>50%</button>
-                                    <button onClick={() => setMontantArticle(resteArticle.toFixed(2))} style={{ padding: '7px 12px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: '#FFF', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>100%</button>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'especes')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Espèces</button>
-                                    <button onClick={() => payerArticle(table, cmd.id, j, montantArticle, 'carte')} style={{ flex: 1, padding: '8px', borderRadius: 6, border: '0.5px solid #CBD5E0', background: 'transparent', color: '#718096', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Carte</button>
-                                    <button onClick={() => { setArticleActif(null); setMontantArticle(''); }} style={{ padding: '8px 12px', borderRadius: 6, border: `0.5px solid #DDD`, background: '#FFF', color: '#666', cursor: 'pointer', fontSize: 12 }}>✕</button>
-                                  </div>
-                                </div>
-                              )}
                             </div>
                           );
                         })}
                       </div>
                     ))}
                   </div>
+                  {!enModif && nbSel > 0 && (
+                    <div style={{ padding: '10px 14px', background: 'rgba(99,179,237,0.08)', borderBottom: '0.5px solid #BEE3F8', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: '#2C5282' }}>Sélection : {montantSel.toFixed(2)} TND</span>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => payerSelection(table, 'especes')} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Payer — Espèces</button>
+                        <button onClick={() => payerSelection(table, 'carte')} style={{ padding: '8px 14px', borderRadius: 8, border: '0.5px solid #3182CE', background: 'transparent', color: '#3182CE', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>Payer — Carte</button>
+                      </div>
+                    </div>
+                  )}
                   {enModif && (
                     <div style={{ padding: '10px 14px', borderBottom: `0.5px solid #F0F0F0`, background: '#FFF8F0' }}>
                       <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Ajouter un article</div>
@@ -1133,13 +1138,24 @@ function DashboardNew() {
                 <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Type</div>
                 <select value={produitEdite.type} onChange={e => setProduitEdite(p => ({ ...p, type: e.target.value }))}
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13, boxSizing: 'border-box', background: '#FFF' }}>
-                  <option value="boisson">boisson</option>
-                  <option value="popup">popup</option>
-                  <option value="sale">sale</option>
+                  <option value="boisson">Ajout direct (pas de popup)</option>
+                  <option value="popup">Fiche descriptive (provenance, composition)</option>
+                  <option value="sale">Fiche avec options (ingrédients + suppléments)</option>
                 </select>
+                <div style={{ fontSize: 11, color: '#aaa', marginTop: 4, lineHeight: 1.4 }}>Détermine comment le produit s'affiche au clic dans le menu client</div>
               </div>
             </div>
-            {champ('Catégorie', 'categorie')}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Catégorie</div>
+              <select value={produitEdite.categorie} onChange={e => setProduitEdite(p => ({ ...p, categorie: e.target.value }))}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: `0.5px solid #DDD`, fontSize: 13, boxSizing: 'border-box', background: '#FFF' }}>
+                <option value="">— Choisir —</option>
+                <option value="Boissons">Boissons</option>
+                <option value="Sans+">Sans+</option>
+                <option value="Pâtisseries">Pâtisseries</option>
+                <option value="Salé">Salé</option>
+              </select>
+            </div>
             {champ('Description', 'description')}
             {champ('Provenance', 'provenance')}
             {champ('Composition', 'composition')}
