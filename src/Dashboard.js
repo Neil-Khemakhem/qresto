@@ -82,6 +82,7 @@ function Dashboard() {
   const [hoveredTab, setHoveredTab] = useState(null);
   const [hoveredEl, setHoveredEl] = useState(null);
   const [tableAccordionOuvert, setTableAccordionOuvert] = useState(null);
+  const [tablesQR, setTablesQR] = useState([]);
   const [showNouvelleCommande, setShowNouvelleCommande] = useState(false);
   const [ncTable, setNcTable] = useState(1);
   const [ncPanier, setNcPanier] = useState([]);
@@ -119,7 +120,14 @@ function Dashboard() {
   useEffect(() => {
     const unsubStocks = onSnapshot(doc(db, 'stocks', 'produits'), (snap) => { if (snap.exists()) setStocks(snap.data()); });
     const unsubSupplements = onSnapshot(doc(db, 'stocks', 'supplements'), (snap) => { if (snap.exists()) setStocksSupplements(snap.data()); });
-    return () => { unsubStocks(); unsubSupplements(); };
+    const unsubTables = onSnapshot(doc(db, 'config', 'tables'), (snap) => {
+      if (snap.exists()) {
+        setTablesQR((snap.data().tables || []).slice().sort((a, b) => a - b));
+      } else {
+        setDoc(doc(db, 'config', 'tables'), { tables: [1, 2, 3, 4, 5] });
+      }
+    });
+    return () => { unsubStocks(); unsubSupplements(); unsubTables(); };
   }, []);
 
   const ouvrirModifier = (commande) => {
@@ -316,6 +324,16 @@ function Dashboard() {
     await addDoc(collection(db, 'commandes'), { table: Number(ncTable), produits, total, statut: 'en_attente', heure: serverTimestamp() });
     ncFermer();
     setSousVueCommandes('en_attente');
+  };
+
+  const ajouterTable = async () => {
+    const prochain = tablesQR.length > 0 ? Math.max(...tablesQR) + 1 : 1;
+    await setDoc(doc(db, 'config', 'tables'), { tables: [...tablesQR, prochain].sort((a, b) => a - b) });
+  };
+
+  const supprimerTable = async (num) => {
+    if (!window.confirm(`Supprimer la Table ${num} ?`)) return;
+    await setDoc(doc(db, 'config', 'tables'), { tables: tablesQR.filter(t => t !== num) });
   };
 
   const tables = [...new Set(commandes.map(c => c.table))].sort((a, b) => a - b);
@@ -1482,33 +1500,50 @@ function Dashboard() {
 
       {/* TABLES & QR CODES */}
       {vue === 'tables' && (
-        <div style={{ padding: 24, maxWidth: 900 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Tables & QR Codes</h2>
-          <p style={{ fontSize: 13, color: '#888', marginBottom: 24 }}>Imprimez le QR code de chaque table pour le déposer sur la table.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-            {[1, 2, 3, 4, 5].map(table => {
+        <div style={{ padding: 24, maxWidth: 1000 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+            <div>
+              <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', margin: '0 0 4px' }}>Tables & QR Codes</h2>
+              <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Imprimez le QR code de chaque table pour le déposer sur la table.</p>
+            </div>
+            <button onClick={ajouterTable}
+              style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 500, flexShrink: 0 }}>
+              + Ajouter une table
+            </button>
+          </div>
+          {tablesQR.length === 0 && <div style={{ textAlign: 'center', marginTop: 60, color: '#999' }}>Chargement…</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            <style>{`@media(max-width:900px){.qr-tables-grid{grid-template-columns:repeat(2,1fr)!important}}@media(max-width:560px){.qr-tables-grid{grid-template-columns:1fr!important}}`}</style>
+            {tablesQR.map(table => {
               const url = `https://qresto-ten.vercel.app?table=${table}`;
               const imprimer = () => {
                 const canvas = document.getElementById(`qr-canvas-table-${table}`);
                 const dataUrl = canvas ? canvas.toDataURL('image/png') : null;
                 const w = window.open('', '_blank');
                 w.document.write(`<!DOCTYPE html><html><head><title>Table ${table}</title><style>
-                  * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; background: #fff; }
-                  img { width: 260px; height: 260px; margin-bottom: 20px; }
-                  h1 { font-size: 28px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
-                  p { font-size: 13px; color: #888; }
-                  @media print { @page { margin: 15mm; } }
+                  *{margin:0;padding:0;box-sizing:border-box}
+                  body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;background:#fff}
+                  img{width:300px;height:300px;margin-bottom:24px}
+                  h1{font-size:32px;font-weight:700;color:#1a1a1a;margin-bottom:10px;letter-spacing:-0.5px}
+                  p{font-size:14px;color:#888;letter-spacing:0.2px}
+                  @media print{@page{margin:20mm}body{justify-content:center}}
                 </style></head><body>
                   ${dataUrl ? `<img src="${dataUrl}" />` : ''}
                   <h1>Table ${table}</h1>
                   <p>La Pâtisserie d'Inès × Sans+</p>
-                  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+                  <script>window.onload=()=>setTimeout(()=>window.print(),300);<\/script>
                 </body></html>`);
                 w.document.close();
               };
               return (
-                <div key={table} style={{ background: '#FFF', borderRadius: 12, padding: '24px 20px', border: '0.5px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <div key={table} style={{ background: '#FFF', borderRadius: 12, padding: '24px 20px', border: '0.5px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, position: 'relative' }}>
+                  <button onClick={() => supprimerTable(table)}
+                    title={`Supprimer Table ${table}`}
+                    onMouseEnter={e => e.currentTarget.querySelector('i').style.color = '#DC2626'}
+                    onMouseLeave={e => e.currentTarget.querySelector('i').style.color = '#999'}
+                    style={{ position: 'absolute', top: 10, right: 10, background: 'transparent', border: '0.5px solid #E2E8F0', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', transition: 'all 0.15s ease', display: 'flex', alignItems: 'center' }}>
+                    <i className="ti ti-trash" style={{ fontSize: 16, color: '#999', transition: 'color 0.15s ease' }} />
+                  </button>
                   <QRCodeCanvas
                     id={`qr-canvas-table-${table}`}
                     value={url}
