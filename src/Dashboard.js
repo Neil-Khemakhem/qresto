@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from './firebase';
 import { collection, onSnapshot, doc, updateDoc, addDoc, serverTimestamp, deleteDoc, setDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
+import { QRCodeCanvas } from 'qrcode.react';
 
 const BRUN = '#7B2B0A';
 const CREME = '#FAF7F2';
@@ -81,6 +82,10 @@ function Dashboard() {
   const [hoveredTab, setHoveredTab] = useState(null);
   const [hoveredEl, setHoveredEl] = useState(null);
   const [tableAccordionOuvert, setTableAccordionOuvert] = useState(null);
+  const [showNouvelleCommande, setShowNouvelleCommande] = useState(false);
+  const [ncTable, setNcTable] = useState(1);
+  const [ncPanier, setNcPanier] = useState([]);
+  const [ncConfig, setNcConfig] = useState(null);
 
   useEffect(() => {
     const unsub1 = onSnapshot(collection(db, 'commandes'), (snap) => {
@@ -288,6 +293,31 @@ function Dashboard() {
     setArticlesSelectionnes(p => { const n = { ...p }; delete n[table]; return n; });
   };
 
+  const ncFermer = () => { setShowNouvelleCommande(false); setNcPanier([]); setNcConfig(null); setNcTable(1); };
+
+  const ncAjouter = (produit, supplementsChoisis = [], ingredientsRetires = []) => {
+    setNcPanier(prev => {
+      if (produit.type === 'sale') {
+        const key = `${produit.id}|${supplementsChoisis.sort().join(',')}|${ingredientsRetires.sort().join(',')}`;
+        const idx = prev.findIndex(p => p._ncKey === key);
+        if (idx >= 0) return prev.map((p, i) => i === idx ? { ...p, quantite: p.quantite + 1 } : p);
+        return [...prev, { ...produit, quantite: 1, supplementsChoisis, ingredientsRetires, ajouteParServeur: true, _ncKey: key }];
+      }
+      const idx = prev.findIndex(p => p.id === produit.id);
+      if (idx >= 0) return prev.map((p, i) => i === idx ? { ...p, quantite: p.quantite + 1 } : p);
+      return [...prev, { ...produit, quantite: 1, supplementsChoisis: [], ingredientsRetires: [], ajouteParServeur: true }];
+    });
+  };
+
+  const ncEnvoyer = async () => {
+    if (!ncPanier.length) return;
+    const produits = ncPanier.map(({ _ncKey, ...p }) => p);
+    const total = produits.reduce((acc, p) => acc + p.prix * p.quantite, 0);
+    await addDoc(collection(db, 'commandes'), { table: Number(ncTable), produits, total, statut: 'en_attente', heure: serverTimestamp() });
+    ncFermer();
+    setSousVueCommandes('en_attente');
+  };
+
   const tables = [...new Set(commandes.map(c => c.table))].sort((a, b) => a - b);
   const commandesParTable = (table) => commandes.filter(c => c.table === table);
   const totalTable = (table) => commandesParTable(table).reduce((acc, c) => acc + (c.total || 0), 0);
@@ -454,6 +484,7 @@ function Dashboard() {
     { key: 'stocks', label: 'Stocks', icon: 'ti-package' },
     { key: 'menu', label: 'Menu', icon: 'ti-tool' },
     { key: 'stats', label: 'Stats', icon: 'ti-chart-bar' },
+    { key: 'tables', label: 'Tables & QR', icon: 'ti-qrcode' },
   ];
 
   return (
@@ -588,9 +619,15 @@ function Dashboard() {
                 );
               })}
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48BB78' }} />
-              <span style={{ fontSize: 12, color: '#48BB78', fontWeight: 500 }}>Live</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#48BB78' }} />
+                <span style={{ fontSize: 12, color: '#48BB78', fontWeight: 500 }}>Live</span>
+              </div>
+              <button onClick={() => setShowNouvelleCommande(true)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> Nouvelle commande
+              </button>
             </div>
           </>
         )}
@@ -1439,6 +1476,218 @@ function Dashboard() {
               style={{ width: '100%', padding: '12px', borderRadius: 8, border: 'none', background: '#1A202C', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
               {modifie ? '✓ Modifications enregistrées — Fermer' : 'Fermer'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* TABLES & QR CODES */}
+      {vue === 'tables' && (
+        <div style={{ padding: 24, maxWidth: 900 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 500, color: '#1a1a1a', marginBottom: 4 }}>Tables & QR Codes</h2>
+          <p style={{ fontSize: 13, color: '#888', marginBottom: 24 }}>Imprimez le QR code de chaque table pour le déposer sur la table.</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+            {[1, 2, 3, 4, 5].map(table => {
+              const url = `https://qresto-ten.vercel.app?table=${table}`;
+              const imprimer = () => {
+                const canvas = document.getElementById(`qr-canvas-table-${table}`);
+                const dataUrl = canvas ? canvas.toDataURL('image/png') : null;
+                const w = window.open('', '_blank');
+                w.document.write(`<!DOCTYPE html><html><head><title>Table ${table}</title><style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; background: #fff; }
+                  img { width: 260px; height: 260px; margin-bottom: 20px; }
+                  h1 { font-size: 28px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+                  p { font-size: 13px; color: #888; }
+                  @media print { @page { margin: 15mm; } }
+                </style></head><body>
+                  ${dataUrl ? `<img src="${dataUrl}" />` : ''}
+                  <h1>Table ${table}</h1>
+                  <p>La Pâtisserie d'Inès × Sans+</p>
+                  <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
+                </body></html>`);
+                w.document.close();
+              };
+              return (
+                <div key={table} style={{ background: '#FFF', borderRadius: 12, padding: '24px 20px', border: '0.5px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                  <QRCodeCanvas
+                    id={`qr-canvas-table-${table}`}
+                    value={url}
+                    size={200}
+                    bgColor="#ffffff"
+                    fgColor="#1a1a1a"
+                    level="M"
+                  />
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#1a1a1a' }}>Table {table}</div>
+                  <div style={{ fontSize: 11, color: '#999', textAlign: 'center' }}>La Pâtisserie d'Inès × Sans+</div>
+                  <button onClick={imprimer}
+                    style={{ padding: '7px 18px', borderRadius: 8, border: '0.5px solid #E2E8F0', background: '#F9F9F9', color: '#333', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                    Imprimer
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL NOUVELLE COMMANDE */}
+      {showNouvelleCommande && (
+        <div onClick={ncFermer}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '24px 16px', overflowY: 'auto' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ background: '#FFF', borderRadius: 14, width: '100%', maxWidth: 560, display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.18)', border: '0.5px solid #E2E8F0', maxHeight: 'calc(100vh - 48px)', overflow: 'hidden' }}>
+
+            {/* Header */}
+            <div style={{ padding: '14px 20px', borderBottom: '0.5px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 500, color: '#1a1a1a' }}>
+                {ncConfig ? `← ${ncConfig.produit.nom}` : 'Nouvelle commande'}
+              </h2>
+              <button onClick={ncConfig ? () => setNcConfig(null) : ncFermer}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}>
+                {ncConfig ? '←' : '✕'}
+              </button>
+            </div>
+
+            {/* Table select (masqué en mode config) */}
+            {!ncConfig && (
+              <div style={{ padding: '12px 20px', borderBottom: '0.5px solid #F0F0F0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 12, color: '#666', flexShrink: 0 }}>Table</span>
+                <select value={ncTable} onChange={e => setNcTable(Number(e.target.value))}
+                  style={{ padding: '7px 12px', borderRadius: 8, border: '0.5px solid #DDD', fontSize: 13, background: '#FFF', flex: 1, maxWidth: 160 }}>
+                  {Array.from({ length: 20 }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>Table {n}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Contenu scrollable */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px' }}>
+
+              {/* CONFIG PRODUIT SALÉ */}
+              {ncConfig && (() => {
+                const { produit, supplementsChoisis, ingredientsRetires } = ncConfig;
+                return (
+                  <div>
+                    <div style={{ background: '#F9F9F9', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: '0.5px solid #E5E5E5' }}>
+                      <div style={{ fontSize: 15, fontWeight: 500 }}>{produit.emoji} {produit.nom}</div>
+                      <div style={{ fontSize: 13, color: '#999', marginTop: 2 }}>{produit.prix.toFixed(2)} TND</div>
+                    </div>
+
+                    {produit.supplements?.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>Suppléments</div>
+                        {produit.supplements.map((s, i) => {
+                          const checked = supplementsChoisis.includes(s.nom);
+                          return (
+                            <div key={i} onClick={() => setNcConfig(prev => ({
+                              ...prev,
+                              supplementsChoisis: checked
+                                ? prev.supplementsChoisis.filter(x => x !== s.nom)
+                                : [...prev.supplementsChoisis, s.nom]
+                            }))} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 12px', borderRadius: 8, marginBottom: 4, border: `0.5px solid ${checked ? '#3182CE' : '#E5E5E5'}`, background: checked ? 'rgba(99,179,237,0.08)' : '#FAFAFA', cursor: 'pointer' }}>
+                              <span style={{ fontSize: 13, color: checked ? '#2B6CB0' : '#333', fontWeight: checked ? 500 : 400 }}>{s.nom}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span style={{ fontSize: 12, color: '#999' }}>+{Number(s.prix).toFixed(2)} TND</span>
+                                <div style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${checked ? '#3182CE' : '#CBD5E0'}`, background: checked ? '#3182CE' : '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  {checked && <span style={{ color: '#FFF', fontSize: 10, lineHeight: 1 }}>✓</span>}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {produit.ingredients?.length > 0 && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>Retirer des ingrédients</div>
+                        {produit.ingredients.map((ing, i) => {
+                          const checked = ingredientsRetires.includes(ing);
+                          return (
+                            <div key={i} onClick={() => setNcConfig(prev => ({
+                              ...prev,
+                              ingredientsRetires: checked
+                                ? prev.ingredientsRetires.filter(x => x !== ing)
+                                : [...prev.ingredientsRetires, ing]
+                            }))} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 12px', borderRadius: 8, marginBottom: 4, border: `0.5px solid ${checked ? '#EF4444' : '#E5E5E5'}`, background: checked ? 'rgba(239,68,68,0.05)' : '#FAFAFA', cursor: 'pointer' }}>
+                              <span style={{ fontSize: 13, color: checked ? '#EF4444' : '#333', textDecoration: checked ? 'line-through' : 'none' }}>{ing}</span>
+                              <div style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${checked ? '#EF4444' : '#CBD5E0'}`, background: checked ? '#EF4444' : '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {checked && <span style={{ color: '#FFF', fontSize: 10, lineHeight: 1 }}>✕</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <button onClick={() => {
+                      ncAjouter(ncConfig.produit, ncConfig.supplementsChoisis, ncConfig.ingredientsRetires);
+                      setNcConfig(null);
+                    }} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#1A202C', color: '#FFF', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+                      Ajouter au panier
+                    </button>
+                  </div>
+                );
+              })()}
+
+              {/* LISTE DES PRODUITS PAR CATÉGORIE */}
+              {!ncConfig && (() => {
+                const actifs = menuProduits.filter(p => p.actif);
+                const parCat = actifs.reduce((acc, p) => { (acc[p.categorie] = acc[p.categorie] || []).push(p); return acc; }, {});
+                return Object.entries(parCat).map(([cat, produits]) => (
+                  <div key={cat} style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>{cat}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {produits.map(produit => (
+                        <div key={produit.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, background: '#F9F9F9', border: '0.5px solid #E5E5E5' }}>
+                          <div>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: '#1a1a1a' }}>{produit.emoji} {produit.nom}</span>
+                            <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{Number(produit.prix).toFixed(2)} TND</span>
+                          </div>
+                          <button onClick={() => {
+                            if (produit.type === 'sale') {
+                              setNcConfig({ produit, supplementsChoisis: [], ingredientsRetires: [] });
+                            } else {
+                              ncAjouter(produit);
+                            }
+                          }} style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', background: '#1A202C', color: '#FFF', cursor: 'pointer', fontSize: 17, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* RÉCAPITULATIF PANIER */}
+            {ncPanier.length > 0 && (
+              <div style={{ borderTop: '0.5px solid #E2E8F0', padding: '14px 20px', flexShrink: 0, background: '#FAFAFA' }}>
+                <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>Récapitulatif</div>
+                {ncPanier.map((p, i) => (
+                  <div key={i} style={{ marginBottom: 3 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#333' }}>
+                      <span>
+                        {p.quantite}× {p.nom}
+                        <button onClick={() => setNcPanier(prev => prev.filter((_, j) => j !== i))}
+                          style={{ background: 'none', border: 'none', color: '#CCC', cursor: 'pointer', fontSize: 13, padding: '0 4px', marginLeft: 4 }}>✕</button>
+                      </span>
+                      <span style={{ color: '#999' }}>{(p.prix * p.quantite).toFixed(2)} TND</span>
+                    </div>
+                    {p.supplementsChoisis?.length > 0 && <div style={{ fontSize: 10, color: '#166534', marginLeft: 16 }}>+ {p.supplementsChoisis.join(', ')}</div>}
+                    {p.ingredientsRetires?.length > 0 && <div style={{ fontSize: 10, color: '#EF4444', marginLeft: 16 }}>✕ Sans : {p.ingredientsRetires.join(', ')}</div>}
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 500, borderTop: '0.5px solid #E5E5E5', paddingTop: 8, marginTop: 8, marginBottom: 12 }}>
+                  <span>Total</span>
+                  <span>{ncPanier.reduce((acc, p) => acc + p.prix * p.quantite, 0).toFixed(2)} TND</span>
+                </div>
+                <button onClick={ncEnvoyer}
+                  style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: '#1A202C', color: '#FFF', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+                  Envoyer — Table {ncTable}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

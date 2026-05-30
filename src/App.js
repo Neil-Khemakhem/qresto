@@ -8,7 +8,17 @@ const TEXT2 = '#999999';
 const BORDER = '#EDEDEA';
 const BTN = '#7A9BAF';
 const EPUISE = '#E24B4A';
-const TABLE = 1;
+
+function getTableFromURL() {
+  try {
+    const url = new URL(window.location.href);
+    const t = url.searchParams.get('table');
+    if (t && !isNaN(parseInt(t))) {
+      return parseInt(t);
+    }
+  } catch(e) {}
+  return 1;
+}
 
 function PopupProduit({ produit, onClose, onAjouter }) {
   const [ingredientsRetires, setIngredientsRetires] = useState([]);
@@ -131,6 +141,7 @@ function PopupProduit({ produit, onClose, onAjouter }) {
 }
 
 function App() {
+  const [TABLE] = useState(getTableFromURL());
   const [panier, setPanier] = useState([]);
   const [commandesTable, setCommandesTable] = useState([]);
   const [categorieActive, setCategorieActive] = useState(null);
@@ -170,7 +181,7 @@ function App() {
       setCommandesTable(data);
     });
     return () => unsub();
-  }, []);
+  }, [TABLE]);
 
   const categories = [...new Set(menu.filter(p => p.actif !== false).map(p => p.categorie))];
   const produitsFiltres = menu.filter(p => p.categorie === categorieActive && p.actif !== false);
